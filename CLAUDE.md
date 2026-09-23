@@ -20,8 +20,9 @@ Requirements live in [`REQUIREMENTS.md`](REQUIREMENTS.md) and are cited by id
 
 ## Current phase
 
-**C1 done; C2 (loading) next.** `Cache[K,V]` (`Get`/`Set`/`Delete`, options),
-`memory`, `codec` and the `Store` interface exist. Nothing is released. Work
+**C2 done; C3 (encoding & validation) next.** `Cache[K,V]` (`Get`,
+`GetOrLoad`, `Set`, `Delete`, options), `internal/singleflight`, `memory`,
+`codec` and the `Store` interface exist. Nothing is released. Work
 is tracked on the [project board](https://github.com/users/JonasBorgesLM/projects/6), grouped
 C0–C8 plus the task-api track T0–T3 (`REQUIREMENTS.md` §13). Do not write
 implementation code without an issue that says to, and write the phase's
