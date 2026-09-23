@@ -11,8 +11,8 @@ import (
 
 // RunBus runs the Bus conformance suite (RF-11, ADR-0006). newBus returns two
 // handles on one medium — two instances of a network Bus, or the same Local
-// twice — so delivery between instances is what is tested. A Bus must be
-// ready to receive once Subscribe returns.
+// twice — so delivery between instances is what is tested. A Bus whose
+// medium is reachable must be ready to receive once Subscribe returns.
 func RunBus(t *testing.T, newBus func(t *testing.T) (a, b bus.Bus)) {
 	t.Helper()
 	for _, tc := range []struct {

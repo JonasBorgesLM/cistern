@@ -208,7 +208,9 @@ request.
 
 **Mitigation:** RNF-02 (fail-open to L1/loader), RNF-03 (short L2 timeouts
 independent of the request deadline), RNF-04 (`Guard` circuit breaker, with
-`bastion` in the examples). Validated by sapper scenarios 3 and 4.
+`bastion` in the examples). Validated by sapper scenarios 3 and 4. A cache
+with a Redis Bus can be built while Redis is down; it starts receiving events
+when Redis returns (ADR-0006, #117).
 
 **Residual:** while Redis is down, the source of truth carries the full load.
 
