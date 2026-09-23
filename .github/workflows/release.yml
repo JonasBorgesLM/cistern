@@ -194,17 +194,30 @@ jobs:
         with:
           path: ${{ runner.temp }}/artifacts
 
-      # RNF-10: an unsigned release is one nobody can attribute. Fails closed
-      # while .github/allowed_signers holds no key.
-      - name: Verify the tag is signed
+      # RNF-10: an unsigned release is one nobody can attribute. The signers
+      # are read from main, never from the tagged tree: a tag on an unreviewed
+      # commit that adds its own key would otherwise vouch for itself (#115).
+      # This job runs the release.yml of the tagged commit, so a tag whose
+      # commit also rewrites this step is not stopped here; a tag ruleset is
+      # the control for that (RELEASING.md).
+      - name: Verify the tag is signed and on main
         run: |
-          keys=$(grep -cv -e '^[[:space:]]*#' -e '^[[:space:]]*$' .github/allowed_signers || true)
-          if [ "${keys:-0}" -eq 0 ]; then
-            echo "::error::.github/allowed_signers holds no key -- no release can be verified (RELEASING.md)"
+          tag='${{ github.ref_name }}'
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          commit=$(git rev-parse "refs/tags/$tag^{commit}")
+          if ! git merge-base --is-ancestor "$commit" origin/main; then
+            echo "::error::$tag points at ${commit:0:12}, which is not on main -- tags are cut on main (RELEASING.md)"
             exit 1
           fi
-          git config gpg.ssh.allowedSignersFile "$GITHUB_WORKSPACE/.github/allowed_signers"
-          git verify-tag '${{ github.ref_name }}'
+          signers="$RUNNER_TEMP/allowed_signers"
+          git show origin/main:.github/allowed_signers > "$signers"
+          keys=$(grep -cv -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$signers" || true)
+          if [ "${keys:-0}" -eq 0 ]; then
+            echo "::error::.github/allowed_signers on main holds no key -- no release can be verified (RELEASING.md)"
+            exit 1
+          fi
+          git config gpg.ssh.allowedSignersFile "$signers"
+          git verify-tag "$tag"
 
       - name: Assemble release notes
         run: |
