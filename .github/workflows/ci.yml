@@ -212,7 +212,8 @@ jobs:
         with:
           version: ${{ env.LINT_VERSION }}
           working-directory: ${{ matrix.module }}
-          args: --config=${{ github.workspace }}/.golangci.yml
+          # The integration suite is behind a build tag; lint it too.
+          args: --config=${{ github.workspace }}/.golangci.yml --build-tags=integration
 
       - name: Install gosec ${{ env.GOSEC_VERSION }}
         run: go install github.com/securego/gosec/v2/cmd/gosec@${{ env.GOSEC_VERSION }}
@@ -221,7 +222,7 @@ jobs:
         working-directory: ${{ matrix.module }}
         # -tests scans test files too: an attack case that no longer compiles
         # is an attack case that is no longer being run.
-        run: gosec -tests -exclude-generated ./...
+        run: gosec -tests -tags=integration -exclude-generated ./...
 
   # ------------------------------------------------------- govulncheck ----
   govulncheck:
@@ -346,6 +347,33 @@ jobs:
           fi
           echo "PR title follows the convention"
 
+  # -------------------------------------------------------- integration ----
+  #
+  # RNF-07: redisstore against a real Redis through testcontainers, never
+  # miniredis. Includes the C4 exit criterion (Redis killed mid-run, reads keep
+  # working) and the proof that the README's ACL user is sufficient.
+  integration:
+    name: integration tests (real Redis)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: redisstore/go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: Create the development workspace
+        run: go work init . ./redisstore
+      # `go test` on no tagged files is a pass, which would make this job green
+      # while proving nothing. The guard makes an absent suite visible instead.
+      - name: redisstore against real Redis
+        working-directory: redisstore
+        run: |
+          if ! grep -rqlE '^//go:build integration' --include='*_test.go' .; then
+            echo "::error::no integration suite found; this job would prove nothing"
+            exit 1
+          fi
+          go test -tags=integration -race -count=1 ./...
+
   # -------------------------------------------------- dependency review ----
   dependency-review:
     name: dependency review
@@ -382,6 +410,7 @@ jobs:
       - docs
       - adr-immutability
       - commits
+      - integration
       - dependency-review
     runs-on: ubuntu-latest
     steps:

@@ -20,10 +20,10 @@ Requirements live in [`REQUIREMENTS.md`](REQUIREMENTS.md) and are cited by id
 
 ## Current phase
 
-**C3 done; C4 (redisstore) next.** `Cache[K,V]` (`Get`, `GetOrLoad`, `Set`,
+**C4 done; C5 (composition) next.** `Cache[K,V]` (`Get`, `GetOrLoad`, `Set`,
 `Delete`, options, key validation, `NoCache`), `internal/singleflight`,
-`internal/envelope`, `memory`, `codec` and the `Store` interface exist.
-Nothing is released. Work
+`internal/envelope`, `memory`, `codec`, the `Store` interface and the
+`redisstore` module exist. Nothing is released. Work
 is tracked on the [project board](https://github.com/users/JonasBorgesLM/projects/6), grouped
 C0–C8 plus the task-api track T0–T3 (`REQUIREMENTS.md` §13). Do not write
 implementation code without an issue that says to, and write the phase's
@@ -36,7 +36,7 @@ planned ADR (`docs/adr/README.md`, "Planned") before its code.
 | Path | Module | Notes |
 | --- | --- | --- |
 | `.` | core | **No `require` at all** — CI's `dependency-policy` enforces it |
-| `redisstore/` | Redis L2 + Pub/Sub Bus | go-redis; testcontainers (test only). Arrives in C4 |
+| `redisstore/` | Redis L2 (Pub/Sub Bus in C6) | go-redis; testcontainers (test only); core pinned by pseudo-version until the first core tag |
 | `examples/` | not published | task-api decorator, bastion, crier. Arrives in C7 |
 
 `memory/`, `codec/`, `envelope/`, `bus/`, `cisterntest/` and `internal/` will be
@@ -61,6 +61,7 @@ Per module — a green build in one says nothing about the other.
 
 ```bash
 go work init . ./redisstore          # once; go.work is not committed
+go work edit -go=1.25.0               # init writes your toolchain's version, which breaks the pinned lint
 
 for m in . redisstore; do
   (cd "$m" && go build ./... && go vet ./... && go test -race ./...)
