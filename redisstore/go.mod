@@ -20,7 +20,7 @@ module github.com/JonasBorgesLM/cistern/redisstore
 go 1.25.0
 
 require (
-	github.com/JonasBorgesLM/cistern v0.0.0-20260923113510-4b882033509a
+	github.com/JonasBorgesLM/cistern v0.0.0-20260923122510-3bf245aea475
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/redis v0.44.0
