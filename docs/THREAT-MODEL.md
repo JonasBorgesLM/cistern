@@ -145,7 +145,9 @@ cache; see §7.
 **Mitigation:** RS-07 (the Bus carries invalidation only, never values). The
 state an event can create is bounded: however many distinct tags a flood
 names, the local copy of generations stays under its limit (#135, found by the
-re-audit).
+re-audit). Reaching that limit evicts only the drop counters, never the
+generations validated by real reads, so the flood's cost does not scale with
+how much legitimate state it can destroy (#145, found by the third pass).
 
 **Residual:** a flood of forged invalidations degrades hit rate to zero, and
 each time it fills the local copy of generations clears it, costing round
