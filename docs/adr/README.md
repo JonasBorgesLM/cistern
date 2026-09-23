@@ -17,12 +17,14 @@ at the time stays readable. The convention is inherited from `crier` and
 | [0008](0008-mandatory-scope-and-physical-key-format.md) | Mandatory scope and the physical key format | Accepted | — |
 | [0010](0010-lru-eviction-is-safe-for-cached-values.md) | LRU eviction is safe for cached values — with one exception | Accepted — constrains ADR-0005 | — |
 | [0013](0013-minimum-go-version-per-module.md) | Minimum Go version per module | Accepted | — |
+| [0014](0014-l1-stores-encoded-bytes.md) | L1 stores encoded bytes behind the same Store as L2 | Accepted — reopening criterion recorded | — |
 
 ADR-0001 and ADR-0013 are the two decisions gated by phase C0
 (`REQUIREMENTS.md` §13): the module layout and the Go version floor have to
 exist before there is any code to build with either. ADR-0002, 0003, 0004, 0008 and
 0010 open C1. ADR-0010 is the one to read with care: it argues that LRU is safe
 here despite `moat`'s M-1, and names the one key in L2 for which that is false.
+ADR-0014 was not in the original plan: it came out of the C1 API review (#13).
 
 ## Planned
 
@@ -44,9 +46,7 @@ Listed here rather than left implicit, because an undecided question that
 looks decided is the one that gets implemented by accident. From
 `REQUIREMENTS.md` §16:
 
-1. **Final public API naming** — a synonym-free review, as done in `moat`.
-   Decided by C1.
-2. **Which `task-api` endpoint goes first** — depends on the T0 baseline
+1. **Which `task-api` endpoint goes first** — depends on the T0 baseline
    result, not decidable now.
 
 None of these blocks C0.
