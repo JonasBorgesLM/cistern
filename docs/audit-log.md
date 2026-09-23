@@ -470,3 +470,282 @@ that accepts the risk (`REQUIREMENTS.md` §13, C8), same as the first pass.
   by construction, since they are not fixed in this PR.
 - **A full independent pass over `examples`** beyond what #122's verification
   and the RS-02/RS-04 evidence already touch.
+
+---
+
+## Re-audit 2 (2026-09-23)
+
+Third pass, again in a clean session with none of the context the code, the
+first audit or the re-audit were written in: no conversation history, no
+notes, only the repository, `docs/audit-brief.md` and this log. Run against
+`develop` at `57fe0c7` (`main` synced to the same tree at `2fea54f`, PR
+#144) — the commit the re-audit's four findings, #134–#137, were fixed onto
+(PRs #139–#142), plus the unmerged-until-now follow-up to #120 (PR #143,
+`test/acl-subscribe-independent`).
+
+**Who ran it.** Claude Code (Claude Sonnet 5), clean session, same
+disclosure as both prior passes: not an independent human audit, and the
+code — including the fixes this pass verifies — may have been written by the
+same model family. The `SECURITY.md` line about no independent security
+auditor is still true, now three times over.
+
+**Scope, per this pass's instructions.** Not a repeat of the first two
+passes. Specifically:
+
+1. The re-audit's four findings and their fixes (#134–#137): reproduce the
+   original issue against current `develop` (must be blocked), redo every
+   negative control the closing PR claims, and push on the exact follow-up
+   questions this pass's brief posed for each one.
+2. The #120 follow-up (PR #143): confirm both ACL assertions now fail
+   together, and that switching `t.Fatalf` to `t.Errorf` didn't let the test
+   run code afterward that assumes the ACL is correct.
+3. The GitHub tag ruleset from #136: confirm it exists, covers exactly the
+   right two patterns, is enforced, and reason about who can bypass it.
+4. Interaction between #112/#113 (round 1) and #134/#135 (round 2), which
+   touch the same `cache.go`/`gencache.go` machinery: `-race -count=20` on
+   the race-focused test files.
+
+**Method.** Same as both prior passes: every negative control was actually
+run, watched failing, then restored with `git diff --quiet` confirmed clean
+before the next step. Proofs of concept were temporary `zz_audit_*` files,
+deleted after running; none is in this PR. Two of them uncovered real,
+reproducible new questions (#134's residual and #135's `clear()` scope) —
+both are written up below with the evidence that survived, not just the
+hypothesis that prompted them.
+
+**Environment.** macOS arm64, Go 1.27.1 for the general suite. `gh api`
+(authenticated as the repository owner) for the ruleset check — this is
+configuration the git history cannot show. Docker 27.5.1, `redis:7.4-alpine`.
+golangci-lint v2.12.2 via `GOTOOLCHAIN=go1.26.5` (see the first re-audit's
+note on why: it cannot typecheck under 1.27.1's standard library). gosec,
+govulncheck.
+
+### 1. Verification of the re-audit's findings (#134–#137)
+
+| # | Repro blocked? | Controls redone? | Anything new? |
+| --- | --- | --- | --- |
+| #134 | Yes — `TestCallersWithUnreadableGenerationsDoNotShareAcrossTags`, `TestCallersWithUnreadableGenerationsStillShareWithinTheirTags` pass | Yes, both: (a) `flightKey`'s unknown-generations branch reverted to the pre-#134 fixed marker (`pk+"\x00?"`) — fails the cross-owner test, user 43 got user 42's value; restored. (b) Reverted to a per-caller-unique key (the option ADR-0007's amendment names and rejects) — fails the same-tags-still-share test (`loads = 2, coalesced = 0`, want `1, 1`); restored | No. See the deep dive below for the two specific questions this pass asked (owner-cross, and the `\x00` join) |
+| #135 | Yes — `TestGenCacheDropsAreBounded`, `TestGenCacheClearByDropsRefusesOlderReads` pass | Yes, both: (a) the bound check removed from `drop` — 30,000 drops leave 30,000 counters uncapped; restored. (b) `clear()`'s `g.clears++` removed — a read whose tag was dropped mid-read restores the retired generation (`stored generation [1]`); restored | **Yes — see #145 below.** The bound itself holds; the mechanism it reuses to enforce it (`clear()`) has a cost the original finding didn't quantify |
+| #136 | N/A (a repository setting, not code) | N/A | Confirmed live — see §2 below |
+| #137 | Yes — `TestUnsubscribeIsBoundedWhileRedisIsUnreachable` passes (unsubscribe returns in ~4s against a Dialer that hangs 10s, well under Subscribe's own bound) | Yes — the bounded `select`/goroutine wrapper reverted to a synchronous unbounded wait; fails with `unsubscribe took 18.104382625s`; restored | No new finding. See the goroutine-lifecycle deep dive below |
+
+**#134 deep dive**, against this pass's specific questions:
+
+- *Does keying by `genKeys` close the cross-owner join?* Yes, and the
+  negative control above proves it: reverting to the pre-#134 fixed marker
+  reopens exactly the original cross-owner leak. With `genKeys` in the key,
+  two owners with different tags get different flight keys whenever their
+  `GetTagged` reads fail, by construction.
+- *Two tags sharing a physical-key prefix but different `genKeys` — same
+  question, restated.* Covered by the same reasoning: `pk` is the same
+  string prefix either way, but the *joined* `genKeys` suffix differs
+  whenever the tags differ, so the full `flightKey` string differs. Two
+  different owners never collapse to the same key unless their tag sets are
+  identical — the same "key function and tag function both omit the owner"
+  residual T-01 already documents (`docs/THREAT-MODEL.md` §7), not a new one.
+- *Can the `\x00` join between `genKeys` elements collide with a tag that
+  already contains `\x00`?* Checked, not assumed. Wrote a throwaway program
+  calling `unicode.IsControl(rune(0))` directly: it returns `true` — NUL is
+  U+0000, in the Unicode `Cc` (control) category. `validateKey` (`keys.go`)
+  rejects every control character by that exact check, and `genKey`
+  (`tags.go`) runs it on every tag before building the counter's key. Since
+  no `genKeys[i]` can contain the join separator, joining them with it is
+  unambiguous (a delimiter that cannot appear inside any joined element
+  can always be split back out): there is no pair of distinct tag sets whose
+  joined form collides. Confirmed with `unicode.IsControl`, not inferred from
+  the comment in `cache.go` that makes the same claim.
+
+**#135 deep dive: the forced-`clear()` question.** The bound `#135` added to
+`drop` is real and holds (control (a) above). But `drop`'s bound and `put`'s
+bound share one mechanism, `clear()`, which empties **both** `g.drops` (the
+counters, what needed bounding) **and** `g.m` (every tag's valid, freshly
+cached generation — what a real tagged read populates to skip an L2 round
+trip). Before `#135`, the only way to trigger `clear()` was a burst of
+*successful* tagged reads through `put`, which is self-limiting. `#135` gave
+`drop()` — fed by untrusted Bus `KindTag` events — the same trigger, on a
+path that needs zero successful reads. Reproduced: populate one real,
+legitimate generation via `put`, then `drop` exactly `maxCachedGens`
+(10,000) distinct forged tag names the replica never asked about — the real
+entry is gone. **This is filed as #145 (MEDIUM)**, distinct from the
+already-accepted T-06 residual ("a flood of forged invalidations degrades
+hit rate to zero") because the cost is fixed (10,000 events) while the
+damage scales with however large the real cache is — a strictly better
+ratio for the attacker than the baseline "one event, one evicted tag" the
+existing residual language describes.
+
+**#137 deep dive: does the spawned goroutine leak?** `unsub()`'s bounded wait
+(control (a) above, and the un-reverted behavior) still spawns a goroutine
+that calls `ps.Close()` and waits `<-done` even after the caller-visible
+`select` times out — exactly as ADR-0006's amendment says: "the redial ends
+on its own, bounded by the dial timeout." Verified, not just read: called
+`Subscribe`+`unsub()` five times in a row against a blackholed address (each
+`~1-2s`, matching the bound), then watched `runtime.NumGoroutine()`: it
+spiked to 11 (from a baseline of 2) right after the five calls, then
+settled back to 2 within 30 seconds — no accumulation with a normally
+configured client (default `DialTimeout`). Pushed further: with a custom
+`Dialer` that blocks forever and ignores its `context.Context` entirely
+(never selects on `ctx.Done()`), the spawned goroutine — and in fact
+`Subscribe` itself — hangs permanently, confirming the residual the fixing
+PR's own description names ("a go-redis Dialer that never connects: no
+limit at all"). This is not filed as a new finding: it is an already
+disclosed limitation of Go's `context` contract itself (a function that
+never checks `ctx.Done()` cannot be bounded by a caller's timeout, by
+construction, regardless of what `redisstore` does on its side), triggered
+only by a Dialer so broken it also breaks `#117`'s bound the same way — not
+a `redisstore`-specific gap.
+
+### 2. The #120 follow-up (PR #143)
+
+Reproduced PR #143's own claimed verification: with `minimalACL`'s channel
+pattern widened from `&cistern:*` to `&*` (the exact control from the first
+re-audit), both assertions now report in the same run:
+
+```
+integration_test.go:228: PUBLISH outside cistern's channels: err = <nil>, want NOPERM
+integration_test.go:233: SUBSCRIBE outside cistern's channels: err = <nil>, want NOPERM
+```
+
+(A first pass at reproducing this only matched the `PUBLISH` line with an
+overly narrow `grep` pattern — worth recording so the false alarm doesn't
+get rediscovered: the full, un-filtered output shows both lines every time.)
+Restored, and the real, documented ACL still passes
+`TestMinimalACLIsSufficient` end to end.
+
+Read the function after both assertions for code that would misbehave
+running past a failed ACL check now that they're `t.Errorf` instead of
+`t.Fatalf`: there is none. Lines 227–234 (both `Errorf` calls) are the last
+statements in the test function; nothing after them uses `s` or `limited`.
+The `t.Fatalf`→`t.Errorf` change cannot let the test read a stale or
+partially-set-up client, because there is nothing left to read.
+
+### 3. The GitHub tag ruleset (#136)
+
+```
+$ gh api repos/JonasBorgesLM/cistern/rulesets
+[{"id":23903936,"name":"Release tags","target":"tag","enforcement":"active", ...}]
+```
+
+Full detail via `gh api repos/JonasBorgesLM/cistern/rulesets/23903936` and
+`gh ruleset view`:
+
+- `conditions.ref_name.include` is exactly `["refs/tags/v*",
+  "refs/tags/redisstore/v*"]`, `exclude: []` — the two patterns #136 asked
+  for, no more and no fewer.
+- `enforcement: "active"` — not `evaluate` (dry-run) or `disabled`.
+- `rules`: `creation`, `update`, `deletion` — all three, matching
+  RELEASING.md's new checklist item (PR #142).
+- `bypass_actors`: one entry, `{"actor_type": "RepositoryRole", "actor_id":
+  5, "bypass_mode": "always"}`.
+
+**What "actor_id: 5" means could not be confirmed from documentation.**
+Checked the REST API reference for rulesets, the "Creating rulesets for a
+repository" guide, and `gh ruleset view`'s own output (which prints the raw
+`RepositoryRole (ID: 5)` without resolving a name) — none of them document
+the numeric-ID-to-role-name mapping. This is a genuine gap in what a
+read-only check can confirm, stated as a question, not asserted as a fact.
+
+What *is* confirmed: `gh api repos/JonasBorgesLM/cistern --jq
+'.permissions'` for the authenticated owner returns `admin: true`, and
+`current_user_can_bypass` on the ruleset is `"always"` — so whatever role ID
+5 names, it includes the owner. The repository has exactly one collaborator
+today (`gh api .../collaborators`), the owner, with every permission bit
+set. Per this pass's own instruction ("você pode simular isso raciocinando
+sobre a configuração retornada pela API, já que não pode criar um segundo
+usuário"): reasoning only, no second account was created to test the
+boundary. Two things are true regardless of what role 5 turns out to be:
+
+1. **Today, the ambiguity has no practical effect.** With one collaborator
+   who is trivially an admin, no one below whatever tier ID 5 represents
+   exists to test the boundary against, and the repository being public
+   (`private: false`) doesn't change this — GitHub does not allow a
+   non-collaborator to push anything to someone else's repository,
+   ruleset or not.
+2. **It would matter the day a second collaborator is added below Admin.**
+   If ID 5 turns out to mean "Maintain" rather than "Admin" (both are
+   plausible without confirmation), a future Maintain-level collaborator
+   could push release tags directly, which is a wider bypass than #136's
+   fix intended ("restricting who can create `v*` tags").
+
+This is recorded as an open question worth resolving before adding any
+collaborator, not as a finding: there is no concrete path today, per the
+brief's own rule that a claim without a reachable path is a question.
+
+**Would a non-admin's tag push actually be blocked?** Reasoned from the
+returned configuration, as instructed (no second account exists to test
+directly): `enforcement: "active"` and `rules: [creation, ...]` on a `tag`
+target ruleset mean GitHub rejects the ref-creation operation itself for any
+pusher who is not a bypass actor. Today that question is moot for the
+reason above (nobody but the owner has any repository access at all), but
+once someone with write-or-above access exists, the ruleset — not repository
+permissions — becomes the actual gate for tag pushes specifically.
+
+### 4. Should the ruleset be checked automatically?
+
+This pass's brief asked directly: is the ruleset's absence-from-CI a gap,
+and should something fail automatically if it's ever removed by mistake
+before the first release? Checked rather than guessed: fetched GitHub's own
+workflow-syntax reference for the exact set of permission keys grantable to
+the default `GITHUB_TOKEN` via a workflow's `permissions:` block. The full
+list (`actions`, `attestations`, `checks`, `contents`, `deployments`,
+`discussions`, `id-token`, `issues`, `packages`, `pages`, `pull-requests`,
+`security-events`, `statuses`, `vulnerability-alerts`, and others) **does
+not include `administration`**, which is what reading repository rulesets
+requires. `gh api repos/.../rulesets`, run with the default token a
+workflow gets, would be refused regardless of what the workflow's
+`permissions:` block declares.
+
+So an automated check is not free: it needs a separate credential (a
+personal access token or a GitHub App installation token with
+`administration: read`) stored as a repository secret, which is a new
+credential to manage — a small but real blast radius increase — for a check
+that already has a manual, documented command
+(`RELEASING.md`, PR #142) run once per release. Recommendation: not worth
+automating *yet*, on cost/benefit grounds, but worth being explicit that
+"documented" and "automatically verified" are different guarantees — this
+audit log is now the second and third place that's had to reconfirm the
+ruleset exists by hand.
+
+### 5. Interaction between rounds 1 and 2's fixes
+
+`-race -count=20` on every test in `races_test.go` (`#112`/`#134`'s tests
+together) and `gencache_race_test.go` (`#113`): 100 total test runs (5 tests
+× 20), zero failures, zero races reported. Also ran the whole core suite at
+`-race -count=5` (35 more runs across every package) — all green. No new
+interaction between #112, #113, #134 and #135's fixes was found.
+
+### Summary of new findings
+
+| # | Severity | Finding | Issue |
+| --- | --- | --- | --- |
+| RE2-01 | MEDIUM | `genCache.drop`'s bound-triggered `clear()` evicts every cached tag's generation, not just the flooded ones, for a fixed attacker cost — an amplification `#135`'s fix inherited from `put`'s pre-existing "wipe both maps" design, newly reachable from untrusted Bus events | #145 |
+
+No finding is fixed in this PR, same rule as both prior passes.
+
+## Observations (re-audit 2): not findings
+
+- **The ruleset's `bypass_actors` role-ID semantics** (§3) could not be
+  confirmed from any documentation this session could reach. Worth
+  resolving — by asking GitHub support, or by testing with a second,
+  lower-privileged collaborator once one exists — before that ambiguity has
+  a practical target to matter against.
+- **Automated ruleset verification** (§4) is not free: it needs a new
+  `administration`-scoped credential the default `GITHUB_TOKEN` cannot
+  provide. Documented as a deliberate non-decision, not an oversight.
+- **`#137`'s spawned goroutine with a `context`-ignoring custom `Dialer`**
+  hangs permanently, confirmed directly. This is a property of Go's
+  `context` contract (nothing can bound a function that never checks
+  `ctx.Done()`), not a `redisstore`-specific defect, and the fixing PR
+  already disclosed it in passing.
+
+## Scope note: what this re-audit did not cover
+
+- **A full re-run of rounds 1 and 2's scope.** By instruction: this pass
+  only covers what neither prior pass audited yet (the four fixes, the
+  ruleset, the #120 follow-up, and the cross-fix interaction).
+- **Creating a second GitHub collaborator** to empirically resolve the
+  `bypass_actors` role-ID question in §3. Reasoned about instead, per this
+  pass's own instruction.
+- **Everything both prior passes already listed as out of scope** (sapper,
+  a live Sentinel failover, the release workflow actually running on
+  GitHub, benchmarks/RNF-11 under a real multi-replica deployment) — still
+  true, and not repeated here.
