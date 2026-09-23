@@ -11,14 +11,21 @@ import (
 type Option func(*config)
 
 type config struct {
-	l1, l2       Store
-	l1Set, l2Set bool
-	ttl          time.Duration
-	l1TTL        time.Duration
-	l1TTLSet     bool
-	jitter       float64
-	codec        codec.Codec
+	l1, l2         Store
+	l1Set, l2Set   bool
+	ttl            time.Duration
+	l1TTL          time.Duration
+	l1TTLSet       bool
+	jitter         float64
+	codec          codec.Codec
+	negTTL         time.Duration
+	negTTLSet      bool
+	loadTimeout    time.Duration
+	loadTimeoutSet bool
 }
+
+// DefaultLoadTimeout bounds a load when WithLoadTimeout is not given.
+const DefaultLoadTimeout = 10 * time.Second
 
 // WithL1 sets the in-process level, typically a memory.Store.
 func WithL1(s Store) Option {
@@ -60,6 +67,22 @@ func WithCodec(cd codec.Codec) Option {
 	return func(c *config) { c.codec = cd }
 }
 
+// WithNegativeTTL enables negative caching (RF-06): when a loader returns
+// ErrNotFound, the absence is remembered for d instead of calling the loader
+// again on every request for the missing key (T-11). d must be positive and no
+// longer than the TTL; the L1 copy of an absence also obeys the L1 TTL.
+func WithNegativeTTL(d time.Duration) Option {
+	return func(c *config) { c.negTTL, c.negTTLSet = d, true }
+}
+
+// WithLoadTimeout bounds how long a load may run (ADR-0007). It must be
+// positive and defaults to DefaultLoadTimeout. When it expires, the callers
+// waiting on the load get an error wrapping context.DeadlineExceeded and the
+// next caller starts a fresh load, even if the loader never returns.
+func WithLoadTimeout(d time.Duration) Option {
+	return func(c *config) { c.loadTimeout, c.loadTimeoutSet = d, true }
+}
+
 // EntryOption configures a single call.
 type EntryOption func(*entryConfig)
 
@@ -69,7 +92,8 @@ type entryConfig struct {
 
 // TTL overrides the cache's TTL for one entry. It must be positive. With both
 // levels configured it sets the L2 TTL; the L1 TTL is the smaller of it and
-// the configured L1 TTL (ADR-0004).
+// the configured L1 TTL (ADR-0004). In GetOrLoad, the options of the call that
+// starts a load are the ones that apply to what it stores.
 func TTL(d time.Duration) EntryOption {
 	return func(e *entryConfig) { e.ttl = d }
 }

@@ -19,7 +19,8 @@ type Codec interface {
 	// Marshal encodes v.
 	Marshal(v any) ([]byte, error)
 	// Unmarshal decodes data into the value v points to, and returns an error
-	// for any input that is not exactly one well-formed encoded value.
+	// for any input that is not exactly one well-formed encoded value. It must
+	// not retain data: coalesced callers decode the same bytes (ADR-0007).
 	Unmarshal(data []byte, v any) error
 }
 
