@@ -80,7 +80,9 @@ trying to read another user's data).
 A tag that carries the owner is a second, independent barrier: an entry
 records its owner's tag generation, which never matches another owner's, so
 it reads as a miss for anyone else even if the key omitted the owner (ADR-0005;
-proven by `examples/taskapi`).
+proven by `examples/taskapi`). Concurrent loads are keyed by those generations
+too, so the barrier also holds for a caller that arrives while another owner's
+load is in flight (ADR-0007 as amended; found by the audit, #112).
 
 **Residual:** a consumer whose key function and tag function both omit the
 owner defeats this; see §7.
@@ -218,7 +220,10 @@ stale data until expiry.
 
 **Mitigation:** for tag invalidation the race is closed — entries record the
 tag generations read before the load, so a bump during the load makes the
-entry stale on arrival (RF-10, ADR-0005, ADR-0011). For an untagged `Delete`:
+entry stale on arrival (RF-10, ADR-0005, ADR-0011); a read issued after
+`InvalidateTag` returns never joins a load that began before it (#112); and a
+read in flight cannot restore the generations an invalidation retired from the
+local copy (#113). For an untagged `Delete`:
 short TTLs on write-exposed entries and coalescing (RF-05).
 
 **Residual:** an untagged key written concurrently with a `Delete` may be
