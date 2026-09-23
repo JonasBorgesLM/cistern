@@ -88,8 +88,10 @@ physical key.
 **Mitigation:** RS-03 (length limit, control-character rejection, opt-in
 SHA-256 hashing of long keys).
 
-**Residual:** the exact separator and hashing threshold are an open question
-(`REQUIREMENTS.md` §16) and must be decided before C1 ships.
+**Residual:** none known in the format itself: every component before the
+consumer key is fixed in count and cannot contain the separator, so a `:`
+inside the key is unambiguous (ADR-0008). Keys are in clear in Redis unless
+hashed, an exposure only to whoever can already read the values.
 
 ### T-03 — A secret is cached
 

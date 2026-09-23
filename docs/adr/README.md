@@ -14,12 +14,13 @@ at the time stays readable. The convention is inherited from `crier` and
 | [0002](0002-fail-open-reads-fail-loud-invalidation.md) | Fail-open reads, fail-loud invalidation | Accepted | — |
 | [0003](0003-cache-aside-default-write-through-deferred.md) | Cache-aside as the default; write-through deferred | Accepted — reopening criterion recorded | — |
 | [0004](0004-l1-l2-composition-and-ttl-ordering.md) | L1+L2 composition with L1 TTL ≤ L2 TTL | Accepted | — |
+| [0008](0008-mandatory-scope-and-physical-key-format.md) | Mandatory scope and the physical key format | Accepted | — |
 | [0010](0010-lru-eviction-is-safe-for-cached-values.md) | LRU eviction is safe for cached values — with one exception | Accepted — constrains ADR-0005 | — |
 | [0013](0013-minimum-go-version-per-module.md) | Minimum Go version per module | Accepted | — |
 
 ADR-0001 and ADR-0013 are the two decisions gated by phase C0
 (`REQUIREMENTS.md` §13): the module layout and the Go version floor have to
-exist before there is any code to build with either. ADR-0002, 0003, 0004 and
+exist before there is any code to build with either. ADR-0002, 0003, 0004, 0008 and
 0010 open C1. ADR-0010 is the one to read with care: it argues that LRU is safe
 here despite `moat`'s M-1, and names the one key in L2 for which that is false.
 
@@ -30,10 +31,9 @@ when each is written — before the code of the phase that needs it, not now.
 
 | ADR | Title | Written during |
 | --- | --- | --- |
-| 0005 | Tag invalidation via generation keys (no `SCAN`/`KEYS`) — must answer ADR-0010's generation-counter exception | C6 |
+| 0005 | Tag invalidation via generation keys (no `SCAN`/`KEYS`) — must answer ADR-0010's generation-counter exception; its encoding may not contain `:` (ADR-0008) | C6 |
 | 0006 | Bus is best-effort and carries invalidation only | C6 |
 | 0007 | Self-contained singleflight under `internal/` | C2 |
-| 0008 | Mandatory key scope | C1 |
 | 0009 | Versioned envelope prepared for stale-while-revalidate | C3 |
 | 0011 | Cache-aside race: accepted risk and mitigations | C6 |
 | 0012 | Redis Cluster out of the initial scope | C4 |
@@ -44,11 +44,9 @@ Listed here rather than left implicit, because an undecided question that
 looks decided is the one that gets implemented by accident. From
 `REQUIREMENTS.md` §16:
 
-1. **Exact physical key format** — separator, and the length threshold above
-   which hashing (RS-03) kicks in opt-in. Decided by C0–C1.
-2. **Final public API naming** — a synonym-free review, as done in `moat`.
+1. **Final public API naming** — a synonym-free review, as done in `moat`.
    Decided by C1.
-3. **Which `task-api` endpoint goes first** — depends on the T0 baseline
+2. **Which `task-api` endpoint goes first** — depends on the T0 baseline
    result, not decidable now.
 
 None of these blocks C0.
