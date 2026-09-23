@@ -103,3 +103,33 @@ func TestCoalescedCallersDoNotShareAValue(t *testing.T) {
 		}
 	}
 }
+
+// RF-15: one load event for the caller that led, one coalesced event for each
+// caller served by it.
+func TestCoalescedCallersAreReported(t *testing.T) {
+	const n = 6
+	var mu sync.Mutex
+	var loads, coalesced int
+	hooks := Hooks{
+		OnLoad:      func(context.Context, LoadEvent) { mu.Lock(); loads++; mu.Unlock() },
+		OnCoalesced: func(context.Context, CoalescedEvent) { mu.Lock(); coalesced++; mu.Unlock() },
+	}
+	c, err := New[string, string]("tasks", func(k string) string { return k }, WithL2(nopStore{}), WithTTL(time.Minute), WithHooks(hooks))
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	results := joinAll(t, c, "hot", n, func(context.Context) (string, error) {
+		<-release
+		return "v", nil
+	})
+	close(release)
+	for range n {
+		<-results
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if loads != 1 || coalesced != n-1 {
+		t.Fatalf("loads = %d, coalesced = %d; want 1 and %d", loads, coalesced, n-1)
+	}
+}

@@ -29,6 +29,8 @@ type config struct {
 	tagsSet        bool
 	bus            bus.Bus
 	busSet         bool
+	hooks          Hooks
+	hookKeys       bool
 }
 
 // Defaults used when the corresponding option is not given.
@@ -129,6 +131,18 @@ func WithTags[K comparable](tags func(K) []string) Option {
 // (RNF-11). A publish failure is returned by the invalidation that caused it.
 func WithBus(b bus.Bus) Option {
 	return func(c *config) { c.bus, c.busSet = b, true }
+}
+
+// WithHooks sets the hooks the cache reports to (RF-15, ADR-0015).
+func WithHooks(h Hooks) Option {
+	return func(c *config) { c.hooks = h }
+}
+
+// WithHookKeys puts the consumer key in hook events. Without it events carry
+// only the namespace, because keys usually embed a user id and hooks usually
+// feed logs (RS-08).
+func WithHookKeys() Option {
+	return func(c *config) { c.hookKeys = true }
 }
 
 // EntryOption configures a single call.
