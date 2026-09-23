@@ -43,6 +43,7 @@ type Cache[K comparable, V any] struct {
 	jitter      float64
 	loadTimeout time.Duration
 	maxValue    int
+	hashKeys    bool
 	codec       codec.Codec
 	codecID     string
 	now         func() time.Time
@@ -68,12 +69,15 @@ func New[K comparable, V any](namespace string, key func(K) string, opts ...Opti
 	if err := validate(namespace, key != nil, &cfg); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
 	}
+	if uncacheableType[V]() {
+		return nil, fmt.Errorf("%w: the value type %T implements NoCache", ErrUncacheable, *new(V))
+	}
 	l1TTL := cfg.ttl
 	if cfg.l1TTLSet {
 		l1TTL = cfg.l1TTL
 	}
 	return &Cache[K, V]{
-		prefix:      "cistern:v1:" + namespace + ":-:k:",
+		prefix:      "cistern:v1:" + namespace + ":-:",
 		key:         key,
 		l1:          cfg.l1,
 		l2:          cfg.l2,
@@ -83,6 +87,7 @@ func New[K comparable, V any](namespace string, key func(K) string, opts ...Opti
 		jitter:      cfg.jitter,
 		loadTimeout: cfg.loadTimeout,
 		maxValue:    cfg.maxValue,
+		hashKeys:    cfg.hashKeys,
 		codec:       cfg.codec,
 		codecID:     cfg.codec.ID(),
 		now:         time.Now,
@@ -132,12 +137,16 @@ func validate(namespace string, hasKey bool, cfg *config) error {
 //
 // Reads fail open (ADR-0002): a level that errors, or an entry that does not
 // decode, is treated as a miss. Apart from ErrNotFound, Get returns an error
-// only when ctx is done.
+// only for an invalid key (ErrInvalidKey) or when ctx is done.
 func (c *Cache[K, V]) Get(ctx context.Context, k K) (value V, ok bool, err error) {
-	if err := ctx.Err(); err != nil {
+	if ctx.Err() != nil {
+		return value, false, ctx.Err()
+	}
+	pk, err := c.physicalKey(k)
+	if err != nil {
 		return value, false, err
 	}
-	return c.read(ctx, c.prefix+c.key(k))
+	return c.read(ctx, pk)
 }
 
 // GetOrLoad returns the cached value for k, or loads it with load, stores it
@@ -162,7 +171,10 @@ func (c *Cache[K, V]) GetOrLoad(ctx context.Context, k K, load Loader[V], opts .
 	if optErr != nil {
 		return zero, optErr
 	}
-	pk := c.prefix + c.key(k)
+	pk, keyErr := c.physicalKey(k)
+	if keyErr != nil {
+		return zero, keyErr
+	}
 	if v, ok, readErr := c.read(ctx, pk); ok || readErr != nil {
 		return v, readErr
 	}
@@ -174,6 +186,9 @@ func (c *Cache[K, V]) GetOrLoad(ctx context.Context, k K, load Loader[V], opts .
 				c.populate(loadCtx, pk, envelope.Entry{Absent: true}, c.negTTL)
 			}
 			return nil, err
+		}
+		if uncacheable(v) {
+			return nil, fmt.Errorf("%w: the loader returned a %T", ErrUncacheable, v)
 		}
 		payload, err := c.codec.Marshal(v)
 		if err != nil {
@@ -205,6 +220,13 @@ func (c *Cache[K, V]) Set(ctx context.Context, k K, v V, opts ...EntryOption) er
 	if err != nil {
 		return err
 	}
+	pk, err := c.physicalKey(k)
+	if err != nil {
+		return err
+	}
+	if uncacheable(v) {
+		return fmt.Errorf("%w: %T", ErrUncacheable, v)
+	}
 	payload, err := c.codec.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("cistern: encoding value: %w", err)
@@ -212,7 +234,7 @@ func (c *Cache[K, V]) Set(ctx context.Context, k K, v V, opts ...EntryOption) er
 	if len(payload) > c.maxValue {
 		return fmt.Errorf("%w: %d bytes encoded, limit %d", ErrValueTooLarge, len(payload), c.maxValue)
 	}
-	return c.write(ctx, c.prefix+c.key(k), envelope.Entry{Payload: payload}, e.ttl)
+	return c.write(ctx, pk, envelope.Entry{Payload: payload}, e.ttl)
 }
 
 // Delete removes k from every configured level. L1 is always evicted, and an
@@ -222,7 +244,10 @@ func (c *Cache[K, V]) Delete(ctx context.Context, k K) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	pk := c.prefix + c.key(k)
+	pk, err := c.physicalKey(k)
+	if err != nil {
+		return err
+	}
 	var errs []error
 	if c.l1 != nil {
 		errs = append(errs, c.l1.Delete(ctx, pk))

@@ -21,4 +21,13 @@ var (
 	// value limit (WithMaxValueBytes, RS-05). Set returns it; GetOrLoad
 	// returns the loaded value without caching it instead.
 	ErrValueTooLarge = errors.New("cistern: value too large")
+
+	// ErrInvalidKey reports a consumer key that is empty, not valid UTF-8,
+	// contains a control character, or is longer than MaxKeyBytes without
+	// WithKeyHashing (RS-03, ADR-0008). It is the caller's bug, so every
+	// operation returns it rather than treating it as a miss.
+	ErrInvalidKey = errors.New("cistern: invalid key")
+
+	// ErrUncacheable reports a value type or value marked NoCache (RS-04).
+	ErrUncacheable = errors.New("cistern: value must not be cached")
 )

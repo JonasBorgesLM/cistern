@@ -33,10 +33,14 @@ func joinAll[V any](t *testing.T, c *Cache[string, V], key string, n int, load L
 			results <- v
 		}()
 	}
+	pk, err := c.physicalKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
 	deadline := time.Now().Add(5 * time.Second)
-	for c.flights.Waiting(c.prefix+key) != n {
+	for c.flights.Waiting(pk) != n {
 		if time.Now().After(deadline) {
-			t.Fatalf("only %d of %d callers joined the flight", c.flights.Waiting(c.prefix+key), n)
+			t.Fatalf("only %d of %d callers joined the flight", c.flights.Waiting(pk), n)
 		}
 		time.Sleep(time.Millisecond)
 	}
