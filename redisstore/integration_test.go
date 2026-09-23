@@ -32,7 +32,7 @@ type testRedis struct {
 	raw       *redis.Client // setup and assertions outside the Store contract
 }
 
-func startRedis(t *testing.T) *testRedis {
+func startRedis(t testing.TB) *testRedis {
 	t.Helper()
 	ctx := context.Background()
 	container, err := tcredis.Run(ctx, redisImage)
@@ -56,7 +56,7 @@ func startRedis(t *testing.T) *testRedis {
 
 // storeFor returns a Store over a default go-redis client — only what New
 // requires is set — so the suite exercises what a consumer would build.
-func (r *testRedis) storeFor(t *testing.T, opts *redis.Options, storeOpts ...redisstore.Option) *redisstore.Store {
+func (r *testRedis) storeFor(t testing.TB, opts *redis.Options, storeOpts ...redisstore.Option) *redisstore.Store {
 	t.Helper()
 	if opts == nil {
 		opts = &redis.Options{}
