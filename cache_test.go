@@ -297,8 +297,7 @@ func TestGetFailsOpenOnStoreErrors(t *testing.T) {
 	})
 }
 
-// RS-06 (the full envelope checks arrive in C3): bytes that do not decode are
-// a miss, never an error or a panic.
+// RS-06: bytes that do not decode are a miss, never an error or a panic.
 func TestUndecodableEntryIsAMiss(t *testing.T) {
 	ctx := context.Background()
 	l2 := newRecorder()

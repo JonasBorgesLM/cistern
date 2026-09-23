@@ -22,10 +22,15 @@ type config struct {
 	negTTLSet      bool
 	loadTimeout    time.Duration
 	loadTimeoutSet bool
+	maxValue       int
+	hashKeys       bool
 }
 
-// DefaultLoadTimeout bounds a load when WithLoadTimeout is not given.
-const DefaultLoadTimeout = 10 * time.Second
+// Defaults used when the corresponding option is not given.
+const (
+	DefaultLoadTimeout   = 10 * time.Second
+	DefaultMaxValueBytes = 1 << 20
+)
 
 // WithL1 sets the in-process level, typically a memory.Store.
 func WithL1(s Store) Option {
@@ -81,6 +86,21 @@ func WithNegativeTTL(d time.Duration) Option {
 // next caller starts a fresh load, even if the loader never returns.
 func WithLoadTimeout(d time.Duration) Option {
 	return func(c *config) { c.loadTimeout, c.loadTimeoutSet = d, true }
+}
+
+// WithMaxValueBytes bounds the encoded size of a value (RS-05). It must be
+// positive and defaults to DefaultMaxValueBytes. Set fails with
+// ErrValueTooLarge over it; GetOrLoad returns an oversized loaded value
+// without caching it; a stored entry over it is read as a miss (ADR-0009).
+func WithMaxValueBytes(n int) Option {
+	return func(c *config) { c.maxValue = n }
+}
+
+// WithKeyHashing stores a consumer key longer than MaxKeyBytes as its SHA-256
+// instead of refusing it (RS-03, ADR-0008). Keys within the limit are never
+// hashed, and every key is still checked for control characters and UTF-8.
+func WithKeyHashing() Option {
+	return func(c *config) { c.hashKeys = true }
 }
 
 // EntryOption configures a single call.
