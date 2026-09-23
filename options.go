@@ -23,6 +23,7 @@ type config struct {
 	loadTimeout    time.Duration
 	loadTimeoutSet bool
 	maxValue       int
+	hashKeys       bool
 }
 
 // Defaults used when the corresponding option is not given.
@@ -93,6 +94,13 @@ func WithLoadTimeout(d time.Duration) Option {
 // without caching it; a stored entry over it is read as a miss (ADR-0009).
 func WithMaxValueBytes(n int) Option {
 	return func(c *config) { c.maxValue = n }
+}
+
+// WithKeyHashing stores a consumer key longer than MaxKeyBytes as its SHA-256
+// instead of refusing it (RS-03, ADR-0008). Keys within the limit are never
+// hashed, and every key is still checked for control characters and UTF-8.
+func WithKeyHashing() Option {
+	return func(c *config) { c.hashKeys = true }
 }
 
 // EntryOption configures a single call.

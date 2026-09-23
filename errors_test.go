@@ -13,6 +13,7 @@ func TestSentinelErrorsAreDistinctAndSurviveWrapping(t *testing.T) {
 		"ErrNotFound":      cistern.ErrNotFound,
 		"ErrInvalidConfig": cistern.ErrInvalidConfig,
 		"ErrValueTooLarge": cistern.ErrValueTooLarge,
+		"ErrInvalidKey":    cistern.ErrInvalidKey,
 	}
 	for name, err := range sentinels {
 		t.Run(name, func(t *testing.T) {
