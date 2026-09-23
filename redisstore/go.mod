@@ -1,10 +1,16 @@
 module github.com/JonasBorgesLM/cistern/redisstore
 
-// No dependency yet: the L2 Store, Bus Pub/Sub and go-redis/testcontainers
-// requires arrive in C4 (REQUIREMENTS.md §13). This floor is not a promise
-// the way the core's is (ADR-0013) — it moves to whatever go-redis and
-// testcontainers-go impose the moment they are added, recorded then as an
-// imposition rather than a choice.
+// This module carries go-redis and, for the integration suite only,
+// testcontainers (RNF-07), so a consumer who brings their own Store never sees
+// either (ADR-0001).
+//
+// The floor is 1.25.0 because testcontainers-go v0.44.0 requires it; go-redis
+// asks for less. It is an IMPOSITION, not a choice, and the core's 1.24 does
+// not follow it (ADR-0013).
+//
+// The core is required at a pseudo-version of develop until the core's first
+// tag; the release replaces it with that tag (RELEASING.md). The
+// satellite-resolution CI job resolves this exact pin with GOWORK=off.
 go 1.25.0
 
 require (
