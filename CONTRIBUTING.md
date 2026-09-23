@@ -137,6 +137,7 @@ about the other.
 
 ```bash
 go work init . ./redisstore          # once; go.work is not committed
+go work edit -go=1.25.0               # init writes your toolchain's version, which breaks the pinned lint
 
 for m in . redisstore; do
   (cd "$m" && go build ./... && go vet ./... && go test -race ./...)
