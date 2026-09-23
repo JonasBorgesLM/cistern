@@ -9,6 +9,7 @@ package memory
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"sync"
@@ -90,18 +91,81 @@ func (s *Store) Get(ctx context.Context, key string) (value []byte, ok bool, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	value, ok = s.getLocked(key)
+	return value, ok, nil
+}
 
+// GetTagged returns the value under key and the generation of each counter in
+// genKeys, creating a missing counter at an unpredictable value (ADR-0005).
+// Counters live in the same LRU as values: one evicted under memory pressure
+// comes back unpredictable, which is what keeps it from repeating (T-14).
+func (s *Store) GetTagged(ctx context.Context, key string, genKeys []string, genTTL time.Duration) (value []byte, ok bool, gens []uint64, err error) {
+	if ctx.Err() != nil {
+		return nil, false, nil, ctx.Err()
+	}
+	if genTTL <= 0 {
+		return nil, false, nil, errors.New("memory: counter ttl must be positive")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value, ok = s.getLocked(key)
+	gens = make([]uint64, len(genKeys))
+	for i, gk := range genKeys {
+		if gens[i], err = s.counterLocked(gk, genTTL); err != nil {
+			return nil, false, nil, err
+		}
+	}
+	return value, ok, gens, nil
+}
+
+// Bump advances each counter in genKeys, creating a missing one first, and
+// sets its TTL to genTTL.
+func (s *Store) Bump(ctx context.Context, genKeys []string, genTTL time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if genTTL <= 0 {
+		return errors.New("memory: counter ttl must be positive")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, gk := range genKeys {
+		g, err := s.counterLocked(gk, genTTL)
+		if err != nil {
+			return err
+		}
+		s.setLocked(&entry{key: gk, value: binary.BigEndian.AppendUint64(nil, g+1), expires: s.now().Add(genTTL)})
+	}
+	return nil
+}
+
+// counterLocked returns the live counter under gk, or creates one. The caller
+// holds s.mu.
+func (s *Store) counterLocked(gk string, ttl time.Duration) (uint64, error) {
+	if v, ok := s.getLocked(gk); ok && len(v) == 8 {
+		return binary.BigEndian.Uint64(v), nil
+	}
+	g, err := cistern.NewGeneration()
+	if err != nil {
+		return 0, err
+	}
+	s.setLocked(&entry{key: gk, value: binary.BigEndian.AppendUint64(nil, g), expires: s.now().Add(ttl)})
+	return g, nil
+}
+
+// getLocked returns a copy of the live value under key. The caller holds s.mu.
+func (s *Store) getLocked(key string) ([]byte, bool) {
 	e, found := s.items[key]
 	if !found {
-		return nil, false, nil
+		return nil, false
 	}
 	if !s.now().Before(e.expires) {
 		s.remove(e)
-		return nil, false, nil
+		return nil, false
 	}
 	s.unlink(e)
 	s.pushFront(e)
-	return clone(e.value), true, nil
+	return clone(e.value), true
 }
 
 // Set stores a copy of value under key for ttl, evicting least recently used
@@ -119,21 +183,26 @@ func (s *Store) Set(ctx context.Context, key string, value []byte, ttl time.Dura
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.setLocked(e)
+	return nil
+}
 
-	if old, found := s.items[key]; found {
+// setLocked stores e, replacing any entry under its key and evicting least
+// recently used entries until both limits hold. The caller holds s.mu.
+func (s *Store) setLocked(e *entry) {
+	if old, found := s.items[e.key]; found {
 		s.remove(old)
 	}
 	if e.size() > s.maxBytes {
-		return nil
+		return
 	}
 	for s.count >= s.maxEntries || s.size+e.size() > s.maxBytes {
 		s.remove(s.head.prev)
 	}
-	s.items[key] = e
+	s.items[e.key] = e
 	s.pushFront(e)
 	s.count++
 	s.size += e.size()
-	return nil
 }
 
 // Delete removes the entry under key, if any.

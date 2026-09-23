@@ -7,12 +7,13 @@ tag and by event.
 The name is the reservoir inside the fortress: you drink from it instead of
 going to the river, and it keeps serving when the river is slow or under siege.
 
-> **Status: unreleased (phase C6 next).** The typed `Cache[K,V]` over an
+> **Status: unreleased (phase C7 next).** The typed `Cache[K,V]` over an
 > in-process L1 and a Redis L2 — `Get`/`GetOrLoad`/`Set`/`Delete`, backfill,
-> load coalescing, negative caching, the versioned envelope, key validation,
-> value limits, `NoCache` — and the `cisterntest` conformance suite exist;
-> invalidation by tag and across instances does not yet — see
-> [Roadmap](#roadmap). No version is tagged, and the API may still change.
+> load coalescing, negative caching, tag invalidation, a cross-instance Bus,
+> the versioned envelope, key validation, value limits, `NoCache` — and the
+> `cisterntest` conformance suites exist; hooks and the examples module do not
+> yet — see [Roadmap](#roadmap). No version is tagged, and the API may still
+> change.
 
 ---
 
@@ -84,7 +85,7 @@ cistern/examples/    not published — task-api decorator, bastion, crier
 | **C3** Encoding & validation | Envelope, key validation, value limit, `NoCache` *(done)* |
 | **C4** redisstore | Redis L2, fail-open, timeouts, `Guard`, testcontainers *(done)* |
 | **C5** Composition | L1+L2, `cisterntest` passing for both stores *(done)* |
-| **C6** Invalidation | Tag generation keys, in-process and Pub/Sub Bus |
+| **C6** Invalidation | Tag generation counters, in-process and Pub/Sub Bus *(done)* |
 | **C7** Hooks & examples | Hooks, `examples` module, README |
 | **C8** Validation & release | sapper scenarios, clean-session audit, `v0.1.0` |
 

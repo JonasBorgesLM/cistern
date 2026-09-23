@@ -219,3 +219,8 @@ func TestConcurrentUse(t *testing.T) {
 func TestConformance(t *testing.T) {
 	cisterntest.RunStore(t, func(t *testing.T) cistern.Store { return newStore(t) })
 }
+
+// ADR-0005: memory keeps tag generations when it is a cache's only level.
+func TestTagStoreConformance(t *testing.T) {
+	cisterntest.RunTagStore(t, func(t *testing.T) cistern.TagStore { return newStore(t) })
+}

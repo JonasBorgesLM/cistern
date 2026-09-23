@@ -11,10 +11,14 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/JonasBorgesLM/cistern"
+	"github.com/JonasBorgesLM/cistern/bus"
 	"github.com/JonasBorgesLM/cistern/redisstore"
 )
 
-var _ cistern.Store = (*redisstore.Store)(nil)
+var (
+	_ cistern.TagStore = (*redisstore.Store)(nil)
+	_ bus.Bus          = (*redisstore.Bus)(nil)
+)
 
 // blackhole accepts connections and never answers: the slowest Redis there
 // is. It counts connections so a test can prove none was made.
@@ -144,8 +148,14 @@ func TestGuardWrapsEveryCall(t *testing.T) {
 	if err := s.Delete(ctx, "k"); !errors.Is(err, errOpen) {
 		t.Errorf("Delete: err = %v, want the guard's error", err)
 	}
-	if g.calls.Load() != 3 {
-		t.Errorf("guard saw %d calls, want 3", g.calls.Load())
+	if _, _, _, err := s.GetTagged(ctx, "k", []string{"g"}, time.Minute); !errors.Is(err, errOpen) {
+		t.Errorf("GetTagged: err = %v, want the guard's error", err)
+	}
+	if err := s.Bump(ctx, []string{"g"}, time.Minute); !errors.Is(err, errOpen) {
+		t.Errorf("Bump: err = %v, want the guard's error", err)
+	}
+	if g.calls.Load() != 5 {
+		t.Errorf("guard saw %d calls, want 5", g.calls.Load())
 	}
 	if conns.Load() != 0 {
 		t.Errorf("Redis received %d connections behind an open guard, want 0", conns.Load())
@@ -188,5 +198,15 @@ func TestSetRejectsNonPositiveTTLWithoutCallingRedis(t *testing.T) {
 	}
 	if conns.Load() != 0 {
 		t.Fatalf("Redis received %d connections for rejected Sets", conns.Load())
+	}
+}
+
+func TestNewBusValidatesItsClient(t *testing.T) {
+	addr, _ := blackhole(t)
+	if b, err := redisstore.NewBus(nil); !errors.Is(err, cistern.ErrInvalidConfig) || b != nil {
+		t.Errorf("NewBus(nil) = %v, %v", b, err)
+	}
+	if b, err := redisstore.NewBus(client(t, addr, false)); !errors.Is(err, cistern.ErrInvalidConfig) || b != nil {
+		t.Errorf("NewBus without ContextTimeoutEnabled = %v, %v", b, err)
 	}
 }

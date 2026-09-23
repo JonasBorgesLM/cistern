@@ -67,3 +67,19 @@ above.
 
 ## Open
 None. Stale-while-revalidate itself is RF-17, post-MVP.
+
+## Amendment (ADR-0005): version 2 carries tag generations
+The format version becomes `2`. After the codec id, the envelope carries the
+generations of the entry's tags, recorded when its value was read from the
+source:
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 11+*n* | 1 | tag count *t*, 0–8 |
+| 12+*n* | 8×*t* | one generation per tag, big-endian, in the order of the entry's sorted tags |
+| 12+*n*+8*t* | rest | payload, as before |
+
+Decoding rejects a count above 8 or a generation section that runs past the
+end, like any other malformation. A version-1 entry is a miss. Tag names are
+not stored: a key's tags come from the cache's tag function, and a count that
+no longer matches is a miss.
