@@ -263,3 +263,40 @@ func mustMemory(t *testing.T) *memory.Store {
 	}
 	return m
 }
+
+// #137, T-12: with Redis unreachable — a dial that hangs, as a host that drops
+// packets makes it — shutting a cache down must not wait on the client's dial
+// timeout. Close is on every graceful-shutdown path.
+// Negative control: verified failing with unsubscribe waiting for delivery to
+// stop without a bound.
+func TestUnsubscribeIsBoundedWhileRedisIsUnreachable(t *testing.T) {
+	c := redis.NewClient(&redis.Options{
+		Addr:                  "cistern.invalid:6379",
+		ContextTimeoutEnabled: true,
+		Dialer: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			// Never connects: a SYN into a host that drops packets waits out
+			// the dial timeout, or the caller's deadline if it is sooner.
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(10 * time.Second):
+				return nil, errors.New("dial timeout")
+			}
+		},
+	})
+	t.Cleanup(func() { _ = c.Close() })
+	b, err := redisstore.NewBus(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsubscribe, err := b.Subscribe(func(bus.Event) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Second) // until go-redis is redialling in the background, where the wait was
+	start := time.Now()
+	unsubscribe()
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("unsubscribe took %v with Redis unreachable", elapsed)
+	}
+}
