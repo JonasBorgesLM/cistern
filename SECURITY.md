@@ -46,9 +46,10 @@ operator must know:
 
 ## Operating Redis for cistern
 
-- **Authentication and TLS** (RS-09): use an ACL user restricted to the
-  commands `redisstore` needs (the exact list is published with `redisstore` in
-  C4) and enable TLS outside local development.
+- **Authentication and TLS** (RS-09): use the ACL user restricted to the
+  commands and keys `redisstore` needs — the exact, tested line is in
+  [`redisstore/README.md`](redisstore/README.md) — and enable TLS outside local
+  development.
 - **`maxmemory-policy allkeys-lru`** (RS-10). This is correct *for a cache* and
   is the deliberate opposite of what `moat`'s rate limiter and `cairn`'s link
   store require (`noeviction`). Do not share an instance or logical database
