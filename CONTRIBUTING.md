@@ -2,7 +2,8 @@
 
 ## Status
 
-`cistern` is pre-implementation. Work is tracked on the GitHub project board,
+`cistern` is pre-implementation. Work is tracked on the
+[project board](https://github.com/users/JonasBorgesLM/projects/6),
 grouped into phases C0 through C8 plus the `task-api` integration track T0–T3
 ([`REQUIREMENTS.md`](REQUIREMENTS.md) §13).
 
@@ -19,7 +20,8 @@ grouped into phases C0 through C8 plus the `task-api` integration track T0–T3
   (see [`RELEASING.md`](RELEASING.md)).
 - **Until the first tag exists**, `main` tracks `develop`: there is no released
   state for it to hold yet, and a default branch showing an empty project is
-  worse than one showing unreleased work.
+  worse than one showing unreleased work. Both branches are protected, so this
+  is a `develop` → `main` pull request, merged once `CI OK` is green.
 - Release commits are made on `main`, and **`main` is merged back into
   `develop` when the release finishes** — otherwise the branches diverge in
   the exact files the release changed.

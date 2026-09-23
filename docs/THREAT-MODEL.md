@@ -88,8 +88,10 @@ physical key.
 **Mitigation:** RS-03 (length limit, control-character rejection, opt-in
 SHA-256 hashing of long keys).
 
-**Residual:** the exact separator and hashing threshold are an open question
-(`REQUIREMENTS.md` §16) and must be decided before C1 ships.
+**Residual:** none known in the format itself: every component before the
+consumer key is fixed in count and cannot contain the separator, so a `:`
+inside the key is unambiguous (ADR-0008). Keys are in clear in Redis unless
+hashed, an exposure only to whoever can already read the values.
 
 ### T-03 — A secret is cached
 
@@ -162,7 +164,7 @@ TLS on a local development Redis.
 fills Redis and writes fail; sharing a database with `moat`'s rate limiter or
 `cairn`'s link store lets cache pressure evict their data.
 
-**Mitigation:** RS-10 (`allkeys-lru` documented as correct *for a cache* —
+**Mitigation:** RS-10 (`allkeys-lru` documented as correct *for cached values*, ADR-0010 —
 the explicit contrast with `moat`, where the same policy caused a bypass; a
 separate instance/logical DB recommended).
 
@@ -214,6 +216,19 @@ risk in ADR-0011.
 
 **Residual:** the window is bounded, not closed. See §7.
 
+### T-14 — Evicted generation counter resurrects invalidated entries
+
+**Actor:** none — Redis memory pressure under `allkeys-lru`, or anyone who can
+delete a key. **Impact:** a tag's generation counter is evicted and recreated
+at a value used before; entries retired by an earlier `InvalidateTag` become
+reachable again and are served as current.
+
+**Mitigation:** RF-10 as constrained by ADR-0010 — a missing generation counter
+must never restart at a value that could have been used before. The mechanism
+is ADR-0005's (C6).
+
+**Residual:** open until ADR-0005 is accepted.
+
 ### Coverage
 
 | Threat | Discharged by |
@@ -231,6 +246,7 @@ risk in ADR-0011.
 | T-11 Penetration | RF-06 |
 | T-12 Redis outage | RNF-02, RNF-03, RNF-04 |
 | T-13 Cache-aside race | RF-10, RNF-11 |
+| T-14 Generation counter evicted | RF-10 (ADR-0010, ADR-0005) |
 
 RS-11 is discharged by this document itself.
 

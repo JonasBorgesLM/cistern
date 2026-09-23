@@ -25,7 +25,7 @@ application outage; a decoded value from Redis that nobody validated.
 
 - [`REQUIREMENTS.md`](REQUIREMENTS.md) — traceable `RF-`/`RS-`/`RNF-` ids,
   architecture, phases
-- [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) — thirteen threats, their
+- [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) — fourteen threats, their
   mitigations, and **what is left over**
 - [`docs/adr/`](docs/adr/README.md) — the decision record
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — git flow, commit convention, and the

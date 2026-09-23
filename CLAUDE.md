@@ -21,7 +21,8 @@ Requirements live in [`REQUIREMENTS.md`](REQUIREMENTS.md) and are cited by id
 ## Current phase
 
 **C0 — bootstrap.** Module skeletons, CI and conventions are in place; no
-domain code exists yet. Work is tracked on the GitHub project board, grouped
+domain code exists yet. Work is tracked on the
+[project board](https://github.com/users/JonasBorgesLM/projects/6), grouped
 C0–C8 plus the task-api track T0–T3 (`REQUIREMENTS.md` §13). Do not write
 implementation code without an issue that says to, and write the phase's
 planned ADR (`docs/adr/README.md`, "Planned") before its code.
