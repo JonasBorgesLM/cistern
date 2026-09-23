@@ -1,0 +1,398 @@
+# CI for cistern. Shape inherited from foundation/kit/ci/go-ci.yml and cairn.
+#
+# Three things drive this file, each learned the expensive way elsewhere in the
+# ecosystem:
+#
+#   1. `go test ./...` at the root does NOT descend into a submodule. Every job
+#      runs per module, or the satellite is simply never built (ADR-0001).
+#   2. Inside a workspace, a satellite's `require` on the core is inert. That is
+#      what shipped moat's redisstore/v0.2.0 broken with every local signal
+#      green. `satellite-resolution` runs with GOWORK=off for that reason.
+#   3. Every tool is pinned to an exact version. `tool@latest` is neither
+#      reproducible nor safe: it hands whoever controls that repository code
+#      execution in this pipeline.
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  schedule:
+    # Weekly, so a newly published vulnerability is found by govulncheck rather
+    # than by a user.
+    - cron: "23 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The newest supported toolchain. govulncheck runs here: a library scanned
+  # only at its floor is checked against a standard library that may no longer
+  # receive fixes (ADR-0013).
+  GO_SUPPORTED_VERSION: "stable"
+  # golangci-lint typechecks against the stdlib of the toolchain it was built
+  # with and refuses a newer one. This pin and LINT_VERSION move together.
+  LINT_GO_VERSION: "1.26"
+  LINT_VERSION: "v2.12.2"
+  GOSEC_VERSION: "v2.28.0"
+  GOVULNCHECK_VERSION: "v1.7.0"
+  # Fail rather than silently fetch a module whose checksum is not in the
+  # transparency log, and fail rather than silently rewrite go.mod.
+  GOFLAGS: -mod=readonly
+  GOSUMDB: sum.golang.org
+
+jobs:
+  # -------------------------------------------------------------- build ----
+  build:
+    name: build & test (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [".", "redisstore"]
+    env:
+      # Build each module at the floor its own go.mod declares (ADR-0013), and
+      # fail rather than silently download a newer toolchain -- a floor that
+      # auto-upgrades is not being tested.
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: "**/go.mod"
+
+      # go.work is not committed (ADR-0001). A satellite builds inside one so a
+      # core change is visible without a tag per commit; the core builds alone,
+      # because it requires nothing and must not borrow a satellite's floor.
+      - name: Create the development workspace
+        if: matrix.module != '.'
+        run: go work init . ./${{ matrix.module }}
+
+      - name: go build
+        working-directory: ${{ matrix.module }}
+        run: go build ./...
+
+      - name: go vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+
+      - name: go test -race
+        working-directory: ${{ matrix.module }}
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Report coverage
+        working-directory: ${{ matrix.module }}
+        run: |
+          if [ -s coverage.out ] && [ "$(wc -l < coverage.out)" -gt 1 ]; then
+            go tool cover -func=coverage.out | tail -1
+          else
+            echo "no coverage profile yet (module has no tests)"
+          fi
+
+  # ------------------------------------------- satellite resolution ----
+  #
+  # GOWORK=off: redisstore resolves the core from the module proxy at the
+  # version its go.mod names -- the resolution a consumer gets, and the only one
+  # that can catch a stale pin. A PR that must change a core API and its
+  # satellite consumer together is the one case where red is expected; label it
+  # `cross-module-window` to skip this deliberately and visibly.
+  satellite-resolution:
+    name: redisstore resolves the published core
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.pull_request.labels.*.name, 'cross-module-window')"
+    env:
+      GOWORK: "off"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: redisstore/go.mod
+          cache-dependency-path: "**/go.mod"
+
+      # No `go work init` anywhere in this job. That omission is the point.
+      - name: Confirm no workspace is in effect
+        working-directory: redisstore
+        run: |
+          gowork="$(go env GOWORK)"
+          if [ "$gowork" != "off" ]; then
+            echo "::error::a workspace is in effect ($gowork); this job proves nothing"
+            exit 1
+          fi
+
+      - name: go mod verify
+        working-directory: redisstore
+        run: go mod verify
+
+      - name: go build, vet, test without the workspace
+        working-directory: redisstore
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
+
+  # ------------------------------------------------- dependency policy ----
+  #
+  # RNF-01 and ADR-0001: the core admits no dependencies at all. Asserted from
+  # the resolver's module graph, never by grepping go.mod -- a grep once matched
+  # a comment in a sibling repository and read it as a requirement.
+  dependency-policy:
+    name: core module takes no dependency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: The core module graph contains only the core
+        run: |
+          # A failed resolution is an error, not an absence. Treating it as
+          # "no dependencies" would let an unresolvable graph pass silently.
+          graph=$(go list -m -f '{{if not .Main}}{{.Path}} {{.Version}}{{end}}' all 2>&1) || {
+            echo "::error::cannot resolve the core module graph"
+            printf '%s\n' "$graph"
+            exit 1
+          }
+          offenders=$(printf '%s\n' "$graph" | grep -v '^$' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error file=go.mod::the core module has acquired a dependency (ADR-0001, RNF-01)"
+            printf '%s\n' "$offenders"
+            exit 1
+          fi
+          echo "core module graph: (none)"
+
+      - name: The core must not import a submodule
+        run: |
+          deps=$(go list -deps ./... 2>&1) || {
+            echo "::error::cannot list the core's package dependencies"
+            printf '%s\n' "$deps"
+            exit 1
+          }
+          if printf '%s\n' "$deps" | grep -E '^github.com/JonasBorgesLM/cistern/(redisstore|examples)(/|$)'; then
+            echo "::error::the core imports a submodule; the dependency arrow points one way only"
+            exit 1
+          fi
+          echo "the core imports no submodule"
+
+  # --------------------------------------------------------------- lint ----
+  lint:
+    name: lint (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [".", "redisstore"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.LINT_GO_VERSION }}
+          cache-dependency-path: "**/go.mod"
+
+      - name: gofmt
+        working-directory: ${{ matrix.module }}
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # v9 of the action runs golangci-lint v2; earlier majors install v1,
+      # which rejects .golangci.yml's `version: "2"` schema.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ env.LINT_VERSION }}
+          working-directory: ${{ matrix.module }}
+          args: --config=${{ github.workspace }}/.golangci.yml
+
+      - name: Install gosec ${{ env.GOSEC_VERSION }}
+        run: go install github.com/securego/gosec/v2/cmd/gosec@${{ env.GOSEC_VERSION }}
+
+      - name: gosec
+        working-directory: ${{ matrix.module }}
+        # -tests scans test files too: an attack case that no longer compiles
+        # is an attack case that is no longer being run.
+        run: gosec -tests -exclude-generated ./...
+
+  # ------------------------------------------------------- govulncheck ----
+  govulncheck:
+    name: govulncheck (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [".", "redisstore"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          # Deliberately not the module floor -- see GO_SUPPORTED_VERSION.
+          go-version: ${{ env.GO_SUPPORTED_VERSION }}
+          cache-dependency-path: "**/go.mod"
+      - name: govulncheck
+        working-directory: ${{ matrix.module }}
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
+          govulncheck ./...
+
+  # --------------------------------------------------------------- docs ----
+  #
+  # Requirement and threat ids are cited from ADRs, godoc, tests and commit
+  # messages. A citation pointing at nothing is how a reader ends up
+  # implementing a requirement that was renumbered.
+  docs:
+    name: documentation is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run the documentation checks
+        run: ./.github/scripts/check-docs.sh
+
+  # ---------------------------------------------------- ADR immutability ----
+  #
+  # An ADR is never rewritten; it is amended or superseded. That is checkable:
+  # an amendment only ADDS lines. A rewrite removes them.
+  adr-immutability:
+    name: accepted ADRs are amended, never rewritten
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: An existing ADR may gain lines, never lose them
+        continue-on-error: ${{ contains(github.event.pull_request.labels.*.name, 'adr-typo') }}
+        run: |
+          base='${{ github.event.pull_request.base.sha }}'
+          rewritten=""
+          for f in $(git diff --name-only --diff-filter=M "$base"...HEAD -- 'docs/adr/[0-9]*.md'); do
+            deleted=$(git diff --numstat "$base"...HEAD -- "$f" | awk '{print $2}')
+            [ "${deleted:-0}" -gt 0 ] && rewritten="$rewritten $f($deleted lines removed)"
+          done
+          if [ -n "$rewritten" ]; then
+            echo "::error::an accepted ADR was rewritten rather than amended:$rewritten"
+            echo ""
+            echo "A change of mind is a new ADR that supersedes this one, or an"
+            echo "'## Amendment' section appended to it. Fixing a typo is the one"
+            echo "legitimate case: label the PR 'adr-typo' to skip this check."
+            exit 1
+          fi
+          echo "no accepted ADR lost a line"
+
+  # ------------------------------------------------------------ commits ----
+  commits:
+    name: conventional commits
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    env:
+      TYPES: "feat|fix|docs|test|refactor|perf|build|ci|chore|revert"
+      SCOPES: "cistern|memory|codec|envelope|bus|cisterntest|redisstore|examples|adr|docs|deps|ci|security"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Every commit in this PR follows the convention
+        run: |
+          pattern="^($TYPES)(\\(($SCOPES)\\))?!?: .+"
+          base='${{ github.event.pull_request.base.sha }}'
+          bad=0
+          while IFS= read -r sha; do
+            subject=$(git log -1 --format=%s "$sha")
+            # A merge commit's subject is generated by the forge, not written.
+            [ "$(git rev-list --no-walk --count --merges "$sha")" -eq 1 ] && continue
+            if ! printf '%s' "$subject" | grep -qE "$pattern"; then
+              echo "::error::not a conventional commit: $subject"
+              bad=1
+              continue
+            fi
+            if [ ${#subject} -gt 72 ]; then
+              echo "::error::subject over 72 characters (${#subject}): $subject"
+              bad=1
+            fi
+            case "$subject" in
+              *.) echo "::error::subject ends with a period: $subject"; bad=1 ;;
+            esac
+          done < <(git rev-list "$base"..HEAD)
+          if [ "$bad" -ne 0 ]; then
+            echo ""
+            echo "Format:  <type>(<scope>)!: <subject>"
+            echo "Types:   $TYPES"
+            echo "Scopes:  $SCOPES"
+            echo "See CONTRIBUTING.md."
+            exit 1
+          fi
+          echo "all commits follow the convention"
+
+      # The PR title becomes the subject on a squash merge, so it is held to
+      # the same rule.
+      - name: The PR title follows the convention
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if ! printf '%s' "$TITLE" | grep -qE "^($TYPES)(\\(($SCOPES)\\))?!?: .+"; then
+            echo "::error::PR title is not a conventional commit: $TITLE"
+            exit 1
+          fi
+          echo "PR title follows the convention"
+
+  # -------------------------------------------------- dependency review ----
+  dependency-review:
+    name: dependency review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v5
+        with:
+          # A new dependency here is a design decision, so a known
+          # vulnerability at any severity fails rather than being triaged later.
+          fail-on-severity: low
+          deny-licenses: GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-2.1, LGPL-3.0
+          comment-summary-in-pr: on-failure
+
+  # -------------------------------------------------------------- gate ----
+  #
+  # The single required check to protect branches with. A matrix job's name
+  # changes when the matrix does, so protecting matrix entries directly means
+  # adding a module silently widens the gap between "CI passed" and
+  # "everything ran". `skipped` counts: PR-only jobs do not run on push.
+  ci-ok:
+    name: CI OK
+    if: always()
+    needs:
+      - build
+      - satellite-resolution
+      - dependency-policy
+      - lint
+      - govulncheck
+      - docs
+      - adr-immutability
+      - commits
+      - dependency-review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any dependency failed
+        run: |
+          results='${{ join(needs.*.result, ' ') }}'
+          echo "Upstream results: $results"
+          for r in $results; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::an upstream job reported '$r'"; exit 1 ;;
+            esac
+          done
+          echo "all upstream jobs passed or were skipped"

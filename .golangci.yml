@@ -1,0 +1,74 @@
+# Strict by intent. cistern's worst failures are silent: a cache hit on another
+# user's data (RS-01, RS-02), an unchecked error on the L2 path that turns
+# fail-open into fail-wrong (RNF-02), a missing doc comment on an exported
+# identifier that leaves a concurrency or TTL contract only in the author's head.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - dupl
+    - errorlint
+    - exhaustive
+    - gocritic
+    - godot
+    - goconst
+    - gosec
+    - misspell
+    - nilerr
+    - noctx
+    - nolintlint
+    - prealloc
+    - predeclared
+    - revive
+    - unconvert
+    - unparam
+    - wastedassign
+    - whitespace
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    exhaustive:
+      default-signifies-exhaustive: true
+    goconst:
+      ignore-tests: true
+    gocritic:
+      enabled-tags: [diagnostic, performance, style]
+      disabled-checks: [hugeParam, rangeValCopy]
+    govet:
+      enable-all: true
+      disable: [fieldalignment]
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+    revive:
+      rules:
+        # An exported identifier without a doc comment ships an API whose
+        # contract exists only in the author's head -- and several of cistern's
+        # contracts (TTL ordering, RF-08; fail-open, RNF-02; the loader being
+        # called once per key, RF-05) live nowhere else.
+        - name: exported
+          arguments: [checkPrivateReceivers]
+        - name: package-comments
+
+  exclusions:
+    rules:
+      # Table-driven tests are repetitive by nature, and a test that ignores a
+      # cleanup error is not the risk this config exists to catch.
+      - path: _test\.go$
+        linters: [dupl, errcheck, gosec, goconst, unparam]
+
+formatters:
+  enable: [gofmt, goimports]
+  settings:
+    goimports:
+      local-prefixes: [github.com/JonasBorgesLM/cistern]
