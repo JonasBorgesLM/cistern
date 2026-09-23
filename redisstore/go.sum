@@ -4,8 +4,8 @@ github.com/AdaLogics/go-fuzz-headers v0.0.0-20240806141605-e8a1dd7889d6 h1:He8af
 github.com/AdaLogics/go-fuzz-headers v0.0.0-20240806141605-e8a1dd7889d6/go.mod h1:8o94RPi1/7XTJvwPpRSzSUedZrtlirdB3r9Z20bi2f8=
 github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c h1:udKWzYgxTojEKWjV8V+WSxDXJ4NFATAsZjh8iIbsQIg=
 github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c/go.mod h1:xomTg63KZ2rFqZQzSB4Vz2SUXa1BpHTVz9L5PTmPC4E=
-github.com/JonasBorgesLM/cistern v0.0.0-20260923132158-7c1dbdc22159 h1:2R7wk/2IwHT1b9p3AlXORlpkIHEzy4tdg4TgFfx31+A=
-github.com/JonasBorgesLM/cistern v0.0.0-20260923132158-7c1dbdc22159/go.mod h1:RXMNdM6kWuBlWeUnwW1mS8jaWiLlsbW/gDjyzaMiN4E=
+github.com/JonasBorgesLM/cistern v0.1.0 h1:jsSt3M315q3Lvgze9l2ZD6LmQDFzNpJh1eFkLBe9TqQ=
+github.com/JonasBorgesLM/cistern v0.1.0/go.mod h1:RXMNdM6kWuBlWeUnwW1mS8jaWiLlsbW/gDjyzaMiN4E=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=
