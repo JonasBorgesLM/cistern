@@ -40,6 +40,11 @@ env:
   LINT_VERSION: "v2.12.2"
   GOSEC_VERSION: "v2.28.0"
   GOVULNCHECK_VERSION: "v1.7.0"
+  # RNF-07: the core's statement coverage may not fall below this, counted
+  # across packages (-coverpkg) so a package exercised by another's tests is
+  # credited. A floor, not a target: tests are for behaviour, and the gate only
+  # catches a change that lands a lot of untested code.
+  COVERAGE_FLOOR: "85"
   # Fail rather than silently fetch a module whose checksum is not in the
   # transparency log, and fail rather than silently rewrite go.mod.
   GOFLAGS: -mod=readonly
@@ -84,16 +89,15 @@ jobs:
 
       - name: go test -race
         working-directory: ${{ matrix.module }}
-        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+        run: go test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 
       - name: Report coverage
         working-directory: ${{ matrix.module }}
-        run: |
-          if [ -s coverage.out ] && [ "$(wc -l < coverage.out)" -gt 1 ]; then
-            go tool cover -func=coverage.out | tail -1
-          else
-            echo "no coverage profile yet (module has no tests)"
-          fi
+        run: go tool cover -func=coverage.out | tail -1
+
+      - name: Core coverage floor (RNF-07)
+        if: matrix.module == '.'
+        run: ./.github/scripts/coverage-floor.sh coverage.out "$COVERAGE_FLOOR"
 
   # ------------------------------------------- satellite resolution ----
   #
