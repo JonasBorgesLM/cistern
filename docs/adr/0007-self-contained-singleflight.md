@@ -95,3 +95,18 @@ A key unique to each caller was considered and rejected: it is equally safe,
 but it turns coalescing off for tagged keys for as long as the generation read
 fails — an L2 outage, when the source of truth carries the whole load (T-10,
 T-12).
+
+## Amendment (re-audit finding #145)
+The #135 amendment bounded `genCache.drop`'s counters by reusing `clear()`,
+which also wipes `m` — the cache of generations validated by real,
+successful reads. That let a flood of `maxCachedGens` forged tag events, the
+fixed cost #135 already accepted, evict every real generation on the
+replica, not only the tags it named: a fixed cost to destroy an unbounded
+amount of legitimate state, cheaper the larger the real cache is.
+
+Reaching the bound in `drop` now resets only the drop counters, still
+counted as a clear so every epoch taken before it is refused (#113); `m`'s
+own size stays bounded separately, by `put`, on its own self-limiting path
+tied to real reads. A flood still costs `maxCachedGens` events per wave and
+still degrades hit rate to zero for the tags it actually names — the
+residual T-06 already accepts — but no longer for tags it never named.
