@@ -7,9 +7,10 @@ tag and by event.
 The name is the reservoir inside the fortress: you drink from it instead of
 going to the river, and it keeps serving when the river is slow or under siege.
 
-> **Status: pre-implementation (phase C0).** Requirements, threat model, the
-> first ADRs and the CI that enforces them are in place. No cache code is
-> written yet — see [Roadmap](#roadmap). Nothing here is importable yet.
+> **Status: unreleased (phase C2 next).** The typed `Cache[K,V]` with
+> `Get`/`Set`/`Delete`, the `memory` L1 and the JSON codec exist; loading,
+> validation, Redis and invalidation do not yet — see [Roadmap](#roadmap). No
+> version is tagged, and the API may still change.
 
 ---
 
@@ -75,8 +76,8 @@ cistern/examples/    not published — task-api decorator, bastion, crier
 
 | Phase | Delivery |
 | --- | --- |
-| **C0** Bootstrap | Repository, modules, CI, conventions, ADR-0001 and ADR-0013 *(current)* |
-| **C1** Public API + memory | `Cache[K,V]`, options, sentinel errors, LRU L1 with TTL and jitter |
+| **C0** Bootstrap | Repository, modules, CI, conventions, ADR-0001 and ADR-0013 *(done)* |
+| **C1** Public API + memory | `Cache[K,V]`, options, sentinel errors, codec, LRU L1 with TTL and jitter *(done)* |
 | **C2** Loading | `GetOrLoad`, coalescing, negative caching |
 | **C3** Encoding & validation | Codec, envelope, key validation, value limit, `NoCache` |
 | **C4** redisstore | Redis L2, fail-open, timeouts, `Guard`, testcontainers |
