@@ -99,12 +99,21 @@ func (g *genCache) put(genKeys []string, gens []uint64, since genEpoch) {
 // events are untrusted and may name any number of tags, so the drop counters
 // are bounded here as well as in put: a replica that never reads a tag would
 // otherwise grow them without limit (#135).
+//
+// Reaching the bound resets only the drop counters (#145), not m: m holds
+// generations validated by real, successful reads, unrelated to whichever
+// tags a flood happens to name, and put already bounds m's own size on that
+// separate, self-limiting path. Resetting drops still counts as a clear, so
+// every epoch taken before it is refused (#113) — coalescing it with wiping m
+// would let a flood of maxCachedGens forged tags evict every real generation
+// on the replica for the same fixed cost, however large the real cache is.
 func (g *genCache) drop(genKey string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	delete(g.m, genKey)
 	if _, seen := g.drops[genKey]; !seen && len(g.drops) >= maxCachedGens {
-		g.clear()
+		clear(g.drops)
+		g.clears++
 	}
 	g.drops[genKey]++
 }

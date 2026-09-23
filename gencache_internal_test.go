@@ -39,3 +39,24 @@ func TestGenCacheClearByDropsRefusesOlderReads(t *testing.T) {
 		t.Fatalf("a read that began before the tag was dropped stored generation %v", gens)
 	}
 }
+
+// #145, T-06: drop's bound-triggered clear must not evict generations that
+// were not named by the flood. Wiping the whole copy makes the flood's cost
+// (maxCachedGens events) independent of how many real, valid generations it
+// destroys, which is a cheaper attack the larger the real cache is.
+// Negative control: verified failing with drop's bound sharing the same
+// clear() that wipes m.
+func TestGenCacheDropFloodDoesNotEvictUnrelatedGenerations(t *testing.T) {
+	g := newGenCache(time.Minute, time.Now)
+	const realTag = "cistern:v1:t:g:user:42:lists"
+	since := g.epoch([]string{realTag})
+	g.put([]string{realTag}, []uint64{7}, since) // a real, valid, freshly-cached generation
+
+	for i := range maxCachedGens + 1 {
+		g.drop(fmt.Sprintf("cistern:v1:t:g:forged:%d", i)) // never seen before; not real's tag
+	}
+
+	if _, ok := g.get([]string{realTag}); !ok {
+		t.Fatal("a flood of forged drops for other tags evicted a real, unrelated generation")
+	}
+}
