@@ -15,7 +15,8 @@ func ExampleNew() {
 	}
 	ctx := context.Background()
 
-	if err := l1.Set(ctx, "cistern:v1:tasks:-:k:user:42:list", []byte(`[1,2,3]`), time.Minute); err != nil {
+	err = l1.Set(ctx, "cistern:v1:tasks:-:k:user:42:list", []byte(`[1,2,3]`), time.Minute)
+	if err != nil {
 		panic(err)
 	}
 	value, ok, err := l1.Get(ctx, "cistern:v1:tasks:-:k:user:42:list")
