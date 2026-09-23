@@ -16,6 +16,7 @@ at the time stays readable. The convention is inherited from `crier` and
 | [0004](0004-l1-l2-composition-and-ttl-ordering.md) | L1+L2 composition with L1 TTL ≤ L2 TTL | Accepted | — |
 | [0007](0007-self-contained-singleflight.md) | Self-contained singleflight under `internal/` | Accepted | — |
 | [0008](0008-mandatory-scope-and-physical-key-format.md) | Mandatory scope and the physical key format | Accepted | — |
+| [0009](0009-versioned-envelope.md) | Versioned envelope prepared for stale-while-revalidate | Accepted | — |
 | [0010](0010-lru-eviction-is-safe-for-cached-values.md) | LRU eviction is safe for cached values — with one exception | Accepted — constrains ADR-0005 | — |
 | [0013](0013-minimum-go-version-per-module.md) | Minimum Go version per module | Accepted | — |
 | [0014](0014-l1-stores-encoded-bytes.md) | L1 stores encoded bytes behind the same Store as L2 | Accepted — reopening criterion recorded | — |
@@ -36,7 +37,6 @@ when each is written — before the code of the phase that needs it, not now.
 | --- | --- | --- |
 | 0005 | Tag invalidation via generation keys (no `SCAN`/`KEYS`) — must answer ADR-0010's generation-counter exception; its encoding may not contain `:` (ADR-0008) | C6 |
 | 0006 | Bus is best-effort and carries invalidation only | C6 |
-| 0009 | Versioned envelope prepared for stale-while-revalidate | C3 |
 | 0011 | Cache-aside race: accepted risk and mitigations | C6 |
 | 0012 | Redis Cluster out of the initial scope | C4 |
 
