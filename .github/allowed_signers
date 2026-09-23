@@ -20,3 +20,5 @@
 #   git config --global tag.gpgsign true
 #
 # See RELEASING.md, "Before the first tag of a module".
+
+jonasleo92@yahoo.com.br namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAoMtarMawZsFsEu/l5bi9M2zVYoGWEfzVAhk5TkXIN1
