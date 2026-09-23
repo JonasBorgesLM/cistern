@@ -115,7 +115,7 @@ jobs:
         working-directory: redisstore
         run: |
           v=$(go list -m -f '{{.Version}}' github.com/JonasBorgesLM/cistern)
-          ./.github/scripts/released-version.sh "$v"
+          ../.github/scripts/released-version.sh "$v"
 
       # A published version carrying a dependency cannot be taken back
       # (ADR-0001, RNF-01).
