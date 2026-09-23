@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"regexp"
+	"sync/atomic"
 	"time"
 
 	"github.com/JonasBorgesLM/cistern/bus"
@@ -50,6 +51,8 @@ type Cache[K comparable, V any] struct {
 	now         func() time.Time
 	rand        func() float64
 	flights     singleflight.Group[[]byte]
+	hooks       Hooks
+	hookKeys    bool
 
 	// Tag invalidation (ADR-0005); tagsFn is nil for an untagged cache.
 	tagsFn    func(K) []string
@@ -119,6 +122,8 @@ func New[K comparable, V any](namespace string, key func(K) string, opts ...Opti
 		genPrefix:   "cistern:v1:" + namespace + ":g:",
 		namespace:   namespace,
 		bus:         cfg.bus,
+		hooks:       cfg.hooks,
+		hookKeys:    cfg.hookKeys,
 	}
 	if tagsFn != nil && cfg.l1 != nil && cfg.l2 != nil {
 		c.gens = newGenCache(l1TTL, func() time.Time { return c.now() })
@@ -246,11 +251,15 @@ func (c *Cache[K, V]) GetOrLoad(ctx context.Context, k K, load Loader[V], opts .
 	// not be read, the value is still returned, but not cached.
 	cacheable := c.tagsFn == nil || gens != nil
 
+	var led atomic.Bool
 	payload, err := c.flights.Do(ctx, s.pk, c.loadTimeout, func(loadCtx context.Context) ([]byte, error) {
+		led.Store(true)
+		start := time.Now()
 		v, err := load(loadCtx)
+		c.onLoad(loadCtx, s.key, time.Since(start), err)
 		if err != nil {
 			if cacheable && c.negTTL > 0 && errors.Is(err, ErrNotFound) {
-				c.populate(loadCtx, s.pk, envelope.Entry{Absent: true, Gens: gens}, c.negTTL)
+				c.populate(loadCtx, s, envelope.Entry{Absent: true, Gens: gens}, c.negTTL)
 			}
 			return nil, err
 		}
@@ -262,10 +271,13 @@ func (c *Cache[K, V]) GetOrLoad(ctx context.Context, k K, load Loader[V], opts .
 			return nil, fmt.Errorf("cistern: encoding value: %w", err)
 		}
 		if cacheable && len(payload) <= c.maxValue {
-			c.populate(loadCtx, s.pk, envelope.Entry{Payload: payload, Gens: gens}, e.ttl)
+			c.populate(loadCtx, s, envelope.Entry{Payload: payload, Gens: gens}, e.ttl)
 		}
 		return payload, nil
 	})
+	if !led.Load() {
+		c.onCoalesced(ctx, s.key)
+	}
 	if err != nil {
 		return zero, err
 	}
@@ -329,7 +341,11 @@ func (c *Cache[K, V]) Delete(ctx context.Context, k K) error {
 		errs = append(errs, c.l2.Delete(ctx, s.pk))
 	}
 	errs = append(errs, c.publish(ctx, bus.KindKey, s.pk))
-	return errors.Join(errs...)
+	err = errors.Join(errs...)
+	if err == nil {
+		c.onInvalidate(ctx, s.key, "", false)
+	}
+	return err
 }
 
 // read looks a slot up. For a tagged cache it also returns the tags' current
@@ -338,7 +354,7 @@ func (c *Cache[K, V]) read(ctx context.Context, s slot) (value V, ok bool, gens 
 	if c.tagsFn != nil {
 		return c.readTagged(ctx, s)
 	}
-	value, ok, err = c.readPlain(ctx, s.pk)
+	value, ok, err = c.readPlain(ctx, s)
 	return value, ok, nil, err
 }
 
@@ -346,43 +362,51 @@ func (c *Cache[K, V]) read(ctx context.Context, s slot) (value V, ok bool, gens 
 // that is malformed, from another codec, past its logical expiry or not
 // decodable, is skipped (ADR-0002, ADR-0009). A usable L2 entry is copied
 // into L1.
-func (c *Cache[K, V]) readPlain(ctx context.Context, pk string) (value V, ok bool, err error) {
-	for _, s := range []Store{c.l1, c.l2} {
-		if s == nil {
+func (c *Cache[K, V]) readPlain(ctx context.Context, s slot) (value V, ok bool, err error) {
+	for _, lv := range []struct {
+		store Store
+		level Level
+	}{{c.l1, LevelL1}, {c.l2, LevelL2}} {
+		if lv.store == nil {
 			continue
 		}
-		data, hit, err := s.Get(ctx, pk)
+		data, hit, err := lv.store.Get(ctx, s.pk)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return value, false, ctxErr
 		}
-		if err != nil || !hit {
+		if err != nil {
+			c.onError(ctx, s.key, OpRead, lv.level, err)
 			continue
 		}
-		e, usable := c.usable(data)
+		if !hit {
+			continue
+		}
+		e, usable := c.checked(ctx, s.key, lv.level, data)
 		if !usable {
 			continue
 		}
-		v, found, err := c.entryValue(e)
+		v, found, err := c.served(ctx, s.key, lv.level, e)
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			continue
 		}
-		if s == c.l2 && c.l1 != nil {
-			c.backfill(ctx, pk, data, e.Expires)
+		if lv.level == LevelL2 && c.l1 != nil {
+			c.backfill(ctx, s, data, e.Expires)
 		}
 		return v, found, err
 	}
+	c.onMiss(ctx, s.key)
 	return value, false, nil
 }
 
 // backfill copies an entry read from L2 into L1, for no longer than the L1
 // TTL and never beyond the L2 entry's own expiry (ADR-0004).
-func (c *Cache[K, V]) backfill(ctx context.Context, pk string, data []byte, expires time.Time) {
+func (c *Cache[K, V]) backfill(ctx context.Context, s slot, data []byte, expires time.Time) {
 	ttl := min(c.l1TTL, expires.Sub(c.now()))
 	if ttl <= 0 {
 		return
 	}
-	if err := c.l1.Set(ctx, pk, data, ttl); err != nil {
-		return // reads fail open (ADR-0002)
+	if err := c.l1.Set(ctx, s.pk, data, ttl); err != nil {
+		c.onError(ctx, s.key, OpBackfill, LevelL1, err) // reads fail open (ADR-0002)
 	}
 }
 
@@ -410,9 +434,9 @@ func (c *Cache[K, V]) write(ctx context.Context, pk string, entry envelope.Entry
 
 // populate stores an entry on behalf of a read. Its failure is not the
 // reader's to handle: reads fail open (ADR-0002).
-func (c *Cache[K, V]) populate(ctx context.Context, pk string, entry envelope.Entry, ttl time.Duration) {
-	if err := c.write(ctx, pk, entry, ttl); err != nil {
-		return // reads fail open (ADR-0002)
+func (c *Cache[K, V]) populate(ctx context.Context, s slot, entry envelope.Entry, ttl time.Duration) {
+	if err := c.write(ctx, s.pk, entry, ttl); err != nil {
+		c.onError(ctx, s.key, OpPopulate, 0, err) // reads fail open (ADR-0002)
 	}
 }
 

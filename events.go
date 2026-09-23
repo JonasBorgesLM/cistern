@@ -47,9 +47,12 @@ func (c *Cache[K, V]) onEvent(e bus.Event) {
 		if c.l1 == nil || !strings.HasPrefix(e.Name, c.prefix) {
 			return
 		}
+		key := strings.TrimPrefix(strings.TrimPrefix(e.Name, c.prefix), "k:")
 		if err := c.l1.Delete(ctx, e.Name); err != nil {
-			return // best-effort: the L1 TTL still bounds staleness (RNF-11)
+			c.onError(ctx, key, OpEvent, LevelL1, err) // best-effort: the L1 TTL still bounds staleness
+			return
 		}
+		c.onInvalidate(ctx, key, "", true)
 	case bus.KindTag:
 		if c.tagsFn == nil {
 			return
@@ -65,8 +68,10 @@ func (c *Cache[K, V]) onEvent(e bus.Event) {
 			// L1 is authoritative here: each replica keeps its own
 			// generations, so the event must advance this one's.
 			if err := c.auth.Bump(ctx, []string{gk}, c.genTTL); err != nil {
-				return // best-effort, as above
+				c.onError(ctx, "", OpEvent, LevelL1, err) // best-effort, as above
+				return
 			}
 		}
+		c.onInvalidate(ctx, "", e.Name, true)
 	}
 }

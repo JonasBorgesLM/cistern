@@ -32,6 +32,7 @@ func RunTagStore(t *testing.T, newStore func(t *testing.T) cistern.TagStore) {
 		{"BumpOfAMissingCounterIsUnpredictable", bumpOfAMissingCounterIsUnpredictable},
 		{"VanishedCounterNeverRepeats", vanishedCounterNeverRepeats},
 		{"CountersExpire", countersExpire},
+		{"BumpRefreshesTheCounterTTL", bumpRefreshesTheCounterTTL},
 		{"NonPositiveCounterTTLIsRejected", nonPositiveCounterTTLIsRejected},
 		{"CancelledContextIsAnError", taggedCancelledContextIsAnError},
 		{"ConcurrentBumpsAreAtomic", concurrentBumpsAreAtomic},
@@ -193,5 +194,22 @@ func concurrentBumpsAreAtomic(t *testing.T, s cistern.TagStore) {
 	wg.Wait()
 	if got, want := gens(t, s, genA)[0], start+goroutines*each; got != want {
 		t.Fatalf("after %d concurrent bumps the counter is %d, want %d", goroutines*each, got, want)
+	}
+}
+
+// ADR-0005: a bump refreshes the counter's TTL, so a tag that keeps being
+// invalidated keeps its counter rather than having it expire mid-use.
+func bumpRefreshesTheCounterTTL(t *testing.T, s cistern.TagStore) {
+	ctx := context.Background()
+	if _, _, _, err := s.GetTagged(ctx, keyA, []string{genA}, 200*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Bump(ctx, []string{genA}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	bumped := gens(t, s, genA)[0]
+	time.Sleep(400 * time.Millisecond)
+	if now := gens(t, s, genA)[0]; now != bumped {
+		t.Fatalf("the counter expired on its first TTL despite a bump: %d became %d", bumped, now)
 	}
 }

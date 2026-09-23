@@ -224,3 +224,25 @@ func TestConformance(t *testing.T) {
 func TestTagStoreConformance(t *testing.T) {
 	cisterntest.RunTagStore(t, func(t *testing.T) cistern.TagStore { return newStore(t) })
 }
+
+// RF-15, ADR-0015: only the L1 knows when it evicts, so it reports it — why,
+// but never which key (RS-08). The hook runs outside the store's lock, so a
+// hook that uses the store does not deadlock.
+// Negative control: verified failing with capacity evictions not reported.
+func TestOnEvictReportsCapacityAndExpiry(t *testing.T) {
+	var s *memory.Store
+	var reasons []memory.EvictReason
+	s = newStore(t, memory.WithMaxEntries(1), memory.WithOnEvict(func(e memory.EvictEvent) {
+		reasons = append(reasons, e.Reason)
+		_, _, _ = s.Get(context.Background(), "probe") // would deadlock under the lock
+	}))
+	mustSet(t, s, "a", "1", hour)
+	mustSet(t, s, "b", "2", hour) // a is evicted for capacity
+	mustSet(t, s, "c", "3", time.Nanosecond)
+	time.Sleep(time.Millisecond)
+	wantMiss(t, s, "c") // found expired on read
+
+	if len(reasons) != 3 || reasons[0] != memory.EvictCapacity || reasons[1] != memory.EvictCapacity || reasons[2] != memory.EvictExpired {
+		t.Fatalf("reasons = %v, want capacity, capacity, expired", reasons)
+	}
+}

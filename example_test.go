@@ -69,3 +69,22 @@ func ExampleCache_Delete() {
 	fmt.Println("cached after invalidation:", ok)
 	// Output: cached after invalidation: false
 }
+
+// Hooks are where fail-open reads report what they swallowed (ADR-0015).
+// Events carry the namespace; the key only with WithHookKeys (RS-08).
+func ExampleWithHooks() {
+	l1, _ := memory.New()
+	var misses int
+	cache, _ := cistern.New[string, string]("profiles", func(id string) string { return "user:" + id },
+		cistern.WithL1(l1), cistern.WithTTL(time.Minute),
+		cistern.WithHooks(cistern.Hooks{
+			OnMiss: func(_ context.Context, e cistern.MissEvent) { misses++ },
+			OnError: func(_ context.Context, e cistern.ErrorEvent) {
+				fmt.Println("swallowed:", e.Op, e.Level, e.Err)
+			},
+		}))
+
+	_, _, _ = cache.Get(context.Background(), "42")
+	fmt.Println("misses:", misses)
+	// Output: misses: 1
+}

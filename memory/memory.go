@@ -31,6 +31,7 @@ type Option func(*config)
 type config struct {
 	maxEntries int
 	maxBytes   int64
+	onEvict    func(EvictEvent)
 }
 
 // WithMaxEntries sets the maximum number of entries. It must be positive.
@@ -39,6 +40,37 @@ func WithMaxEntries(n int) Option { return func(c *config) { c.maxEntries = n } 
 // WithMaxBytes sets the maximum total size of the entries, where an entry
 // costs len(key) + len(value) bytes. It must be positive.
 func WithMaxBytes(n int64) Option { return func(c *config) { c.maxBytes = n } }
+
+// EvictReason says why an entry was evicted.
+type EvictReason uint8
+
+// The reasons for an eviction.
+const (
+	EvictCapacity EvictReason = iota + 1 // the entry or byte limit needed room
+	EvictExpired                         // the entry was found past its TTL
+)
+
+// String returns "capacity" or "expired".
+func (r EvictReason) String() string {
+	switch r {
+	case EvictCapacity:
+		return "capacity"
+	case EvictExpired:
+		return "expired"
+	}
+	return ""
+}
+
+// EvictEvent describes one eviction. It carries no key: keys usually embed a
+// user id (RS-08).
+type EvictEvent struct {
+	Reason EvictReason
+}
+
+// WithOnEvict reports every eviction to fn (RF-15, ADR-0015). fn runs after
+// the store's lock is released, so it may use the store; it must not block,
+// and a panic in it is recovered and ignored.
+func WithOnEvict(fn func(EvictEvent)) Option { return func(c *config) { c.onEvict = fn } }
 
 // Store is an in-memory cistern.Store. It is safe for concurrent use.
 type Store struct {
@@ -50,6 +82,8 @@ type Store struct {
 	head       entry // sentinel: head.next is most recently used, head.prev least
 	items      map[string]*entry
 	now        func() time.Time
+	onEvict    func(EvictEvent)
+	evicted    []EvictReason // pending reports, taken outside the lock
 }
 
 type entry struct {
@@ -79,6 +113,7 @@ func New(opts ...Option) (*Store, error) {
 		maxBytes:   cfg.maxBytes,
 		items:      make(map[string]*entry),
 		now:        time.Now,
+		onEvict:    cfg.onEvict,
 	}
 	s.head.next, s.head.prev = &s.head, &s.head
 	return s, nil
@@ -89,6 +124,7 @@ func (s *Store) Get(ctx context.Context, key string) (value []byte, ok bool, err
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
+	defer s.reportEvictions()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value, ok = s.getLocked(key)
@@ -106,6 +142,7 @@ func (s *Store) GetTagged(ctx context.Context, key string, genKeys []string, gen
 	if genTTL <= 0 {
 		return nil, false, nil, errors.New("memory: counter ttl must be positive")
 	}
+	defer s.reportEvictions()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value, ok = s.getLocked(key)
@@ -127,6 +164,7 @@ func (s *Store) Bump(ctx context.Context, genKeys []string, genTTL time.Duration
 	if genTTL <= 0 {
 		return errors.New("memory: counter ttl must be positive")
 	}
+	defer s.reportEvictions()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, gk := range genKeys {
@@ -160,7 +198,7 @@ func (s *Store) getLocked(key string) ([]byte, bool) {
 		return nil, false
 	}
 	if !s.now().Before(e.expires) {
-		s.remove(e)
+		s.evict(e, EvictExpired)
 		return nil, false
 	}
 	s.unlink(e)
@@ -181,6 +219,7 @@ func (s *Store) Set(ctx context.Context, key string, value []byte, ttl time.Dura
 	}
 	e := &entry{key: key, value: clone(value), expires: s.now().Add(ttl)}
 
+	defer s.reportEvictions()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.setLocked(e)
@@ -197,7 +236,7 @@ func (s *Store) setLocked(e *entry) {
 		return
 	}
 	for s.count >= s.maxEntries || s.size+e.size() > s.maxBytes {
-		s.remove(s.head.prev)
+		s.evict(s.head.prev, EvictCapacity)
 	}
 	s.items[e.key] = e
 	s.pushFront(e)
@@ -217,6 +256,32 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 		s.remove(e)
 	}
 	return nil
+}
+
+// evict drops e and queues its report. The caller holds s.mu.
+func (s *Store) evict(e *entry, reason EvictReason) {
+	s.remove(e)
+	if s.onEvict != nil {
+		s.evicted = append(s.evicted, reason)
+	}
+}
+
+// reportEvictions delivers queued eviction reports. It is deferred before the
+// lock is taken, so it runs after the lock is released.
+func (s *Store) reportEvictions() {
+	if s.onEvict == nil {
+		return
+	}
+	s.mu.Lock()
+	pending := s.evicted
+	s.evicted = nil
+	s.mu.Unlock()
+	for _, reason := range pending {
+		func() {
+			defer func() { recover() }() //nolint:errcheck // the panic is deliberately dropped (ADR-0015)
+			s.onEvict(EvictEvent{Reason: reason})
+		}()
+	}
 }
 
 // remove drops e from the store. The caller holds s.mu.
