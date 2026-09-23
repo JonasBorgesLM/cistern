@@ -19,8 +19,11 @@ const DefaultTimeout = 100 * time.Millisecond
 // error without touching Redis, and cistern's fail-open read path turns it
 // into a miss (ADR-0002).
 //
-// op's context already carries the Store's per-call timeout. A Guard must
-// call op at most once and return its error unchanged, or its own.
+// The Guard receives the caller's context; the Store's per-call timeout is
+// applied inside op, so a timeout reaches the Guard as op's error while its
+// own context is still live — a failure of the dependency, which a breaker
+// must count, not a cancellation by the caller, which bastion does not. A
+// Guard must call op at most once and return its error unchanged, or its own.
 type Guard interface {
 	Do(ctx context.Context, op func(context.Context) error) error
 }
@@ -121,9 +124,12 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// call runs op through the Guard under the per-call timeout.
+// call runs op through the Guard, bounding op — not the Guard — by the
+// per-call timeout (see Guard).
 func (s *Store) call(ctx context.Context, op func(context.Context) error) error {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
-	defer cancel()
-	return s.guard.Do(ctx, op)
+	return s.guard.Do(ctx, func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, s.timeout)
+		defer cancel()
+		return op(ctx)
+	})
 }

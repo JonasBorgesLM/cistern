@@ -77,7 +77,13 @@ response looks wrong.
 RS-02 (owner-scoped `KeyFunc` as the documented pattern, plus an explicit test
 trying to read another user's data).
 
-**Residual:** a consumer `KeyFunc` that omits the owner defeats this; see §7.
+A tag that carries the owner is a second, independent barrier: an entry
+records its owner's tag generation, which never matches another owner's, so
+it reads as a miss for anyone else even if the key omitted the owner (ADR-0005;
+proven by `examples/taskapi`).
+
+**Residual:** a consumer whose key function and tag function both omit the
+owner defeats this; see §7.
 
 ### T-02 — Key injection and ambiguous collisions
 
@@ -285,10 +291,11 @@ would look more complete than it is:
 
 ## 7. What this design does not stop
 
-- **A `KeyFunc` that omits the owner scope.** T-01's mitigation is structural
-  encouragement (RS-01, RS-02) and a test against the documented pattern, not
-  a guarantee that every consumer implements `KeyFunc` correctly. This is the
-  single largest residual risk in the design.
+- **A key function and a tag function that both omit the owner scope.** T-01's
+  mitigation is structural encouragement (RS-01, RS-02), an owner-scoped tag as
+  a second barrier, and tests against the documented pattern — not a guarantee
+  that every consumer scopes either. This is the largest residual risk in the
+  design.
 - **A privileged Redis-adjacent attacker reading cached values directly.**
   RS-06 stops a *malformed* envelope from being decoded into something
   dangerous; it does not encrypt data at rest. Anyone who can read Redis's

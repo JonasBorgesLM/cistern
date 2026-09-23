@@ -24,6 +24,7 @@ at the time stays readable. The convention is inherited from `crier` and
 | [0012](0012-redis-cluster-out-of-scope.md) | Redis Cluster out of the initial scope | Accepted — reopening criterion recorded | — |
 | [0013](0013-minimum-go-version-per-module.md) | Minimum Go version per module | Accepted | — |
 | [0014](0014-l1-stores-encoded-bytes.md) | L1 stores encoded bytes behind the same Store as L2 | Accepted — reopening criterion recorded | — |
+| [0015](0015-observability-through-hooks.md) | Observability through hooks, with keys withheld by default | Accepted | — |
 
 ADR-0001 and ADR-0013 are the two decisions gated by phase C0
 (`REQUIREMENTS.md` §13): the module layout and the Go version floor have to

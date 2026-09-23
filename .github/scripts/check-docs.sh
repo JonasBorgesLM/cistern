@@ -120,6 +120,27 @@ else
   pass "every relative document link resolves"
 fi
 
+# --- 5. Every public package has an Example (RNF-08) ------------------------
+#
+# The lesson from moat's realip: an exported package with no Example is one
+# whose intended use nobody wrote down. internal/ is not public; examples/ is
+# the examples, not an API.
+missing=""
+while IFS= read -r dir; do
+  case "$dir" in
+    ./internal|./internal/*|*/internal/*|./examples|./examples/*|./.git*|./graphify-out*|*/testdata*) continue ;;
+  esac
+  ls "$dir"/*.go >/dev/null 2>&1 || continue
+  ls "$dir"/*.go | grep -qv '_test\.go$' || continue
+  grep -qs '^func Example' "$dir"/*_test.go || missing="$missing $dir"
+done < <(find . -type d)
+if [ -n "$missing" ]; then
+  fail "public packages with no Example function:$missing"
+  note "Add an ExampleXxx to each, in a _test.go file (RNF-08)."
+else
+  pass "every public package has an Example"
+fi
+
 echo
 if [ "$FAILED" -ne 0 ]; then echo "Documentation checks failed."; exit 1; fi
 echo "Documentation checks passed."

@@ -53,7 +53,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [".", "redisstore"]
+        module: [".", "redisstore", "examples"]
     env:
       # Build each module at the floor its own go.mod declares (ADR-0013), and
       # fail rather than silently download a newer toolchain -- a floor that
@@ -72,7 +72,7 @@ jobs:
       # because it requires nothing and must not borrow a satellite's floor.
       - name: Create the development workspace
         if: matrix.module != '.'
-        run: go work init . ./${{ matrix.module }}
+        run: go work init . ./redisstore ./examples
 
       - name: go build
         working-directory: ${{ matrix.module }}
@@ -188,7 +188,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [".", "redisstore"]
+        module: [".", "redisstore", "examples"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -231,7 +231,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [".", "redisstore"]
+        module: [".", "redisstore", "examples"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -362,7 +362,7 @@ jobs:
           go-version-file: redisstore/go.mod
           cache-dependency-path: "**/go.sum"
       - name: Create the development workspace
-        run: go work init . ./redisstore
+        run: go work init . ./redisstore ./examples
       # `go test` on no tagged files is a pass, which would make this job green
       # while proving nothing. The guard makes an absent suite visible instead.
       - name: redisstore against real Redis
