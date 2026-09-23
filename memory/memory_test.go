@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/JonasBorgesLM/cistern"
+	"github.com/JonasBorgesLM/cistern/cisterntest"
 	"github.com/JonasBorgesLM/cistern/memory"
 )
 
@@ -212,4 +213,9 @@ func TestConcurrentUse(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// RF-14: memory passes the conformance suite every Store must pass.
+func TestConformance(t *testing.T) {
+	cisterntest.RunStore(t, func(t *testing.T) cistern.Store { return newStore(t) })
 }
