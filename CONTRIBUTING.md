@@ -2,7 +2,9 @@
 
 ## Status
 
-`cistern` is unreleased. Work is tracked on the
+`cistern` is released: [`v0.1.0`](https://github.com/JonasBorgesLM/cistern/releases/tag/v0.1.0)
+and [`redisstore/v0.1.0`](https://github.com/JonasBorgesLM/cistern/releases/tag/redisstore/v0.1.0).
+Work is tracked on the
 [project board](https://github.com/users/JonasBorgesLM/projects/6),
 grouped into phases C0 through C8 plus the `task-api` integration track T0–T3
 ([`REQUIREMENTS.md`](REQUIREMENTS.md) §13).
@@ -18,13 +20,16 @@ grouped into phases C0 through C8 plus the `task-api` integration track T0–T3
 - Every pull request targets `develop`. Nothing targets `main` directly.
 - At each release, `develop` merges into `main` and the tags are cut there
   (see [`RELEASING.md`](RELEASING.md)).
-- **Until the first tag exists**, `main` tracks `develop`: there is no released
-  state for it to hold yet, and a default branch showing an empty project is
-  worse than one showing unreleased work. Both branches are protected, so this
-  is a `develop` → `main` pull request, merged once `CI OK` is green.
-- Release commits are made on `main`, and **`main` is merged back into
-  `develop` when the release finishes** — otherwise the branches diverge in
-  the exact files the release changed.
+- **Before the first tag existed**, `main` tracked `develop` directly (a
+  `develop` → `main` pull request, merged once `CI OK` was green), since there
+  was no released state for it to hold yet and a default branch showing an
+  empty project is worse than one showing unreleased work. That period is over
+  — `v0.1.0` exists.
+- Release commits (a version bump such as a satellite's core requirement) are
+  made on `main`, and **`main` is merged back into `develop` when the release
+  finishes** — otherwise the branches diverge in the exact files the release
+  changed. Both branches are protected; every merge, either direction, needs a
+  green `CI OK`.
 
 ### Branches
 
