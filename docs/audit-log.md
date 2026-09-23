@@ -221,3 +221,252 @@ concrete harmful path, so none is filed as an issue.
 - **Repository settings** (branch protection, tag rulesets, private
   vulnerability reporting). Not inspected. RELEASING.md lists the last as a
   release checklist item.
+
+---
+
+## Re-audit (2026-09-23)
+
+Second pass, also in a clean session with none of the context either the code
+or the original audit was written in: no conversation history, no notes,
+only the repository, `docs/audit-brief.md` and this log. Run against
+`develop` at `57736ae` (the commit the original audit's findings, #112–#122,
+were all fixed and merged onto — PRs #124–#133). The rules, format and
+commands are still the brief's; this section adds the parts the instructions
+for this pass asked for on top of it.
+
+**Who ran it.** Claude Code (Claude Sonnet 5), clean session, same
+disclosure as before: not an independent human audit, and the code may have
+been written by the same model family. The line in `SECURITY.md` about no
+independent security auditor is still true.
+
+**Method.** Part 1 re-verified every one of #112–#122: read the issue and the
+PR that closed it, ran the issue's original reproduction against current
+`develop` (must be blocked), redid every negative control the PR or its
+comments claim (`git diff --quiet` confirmed before and after each one), and
+looked for regressions and for narrower windows the original fix might have
+missed. Proofs of concept were temporary `zz_audit_*` files, deleted after
+running; none is in this PR. Part 2 covers what the first audit's scope note
+listed as not done: the pinned Go floors, `/security-review` and
+`/code-review`, longer fuzzing, and TLS/Sentinel.
+
+**Environment.** macOS arm64, Go 1.27.1 for the general suite;
+`GOWORK=off GOTOOLCHAIN=go1.24.0` for the core's own floor and
+`GOWORK=off GOTOOLCHAIN=go1.25.0` for redisstore's (§10 of this section).
+golangci-lint v2.12.2 refuses to typecheck under Go 1.27.1's standard library
+(`math/rand/v2`: "method must have no type parameters") — an environment
+incompatibility, not a project defect — so it was run with
+`GOTOOLCHAIN=go1.26.5`, the version CI actually pins, as the first audit also
+did. gosec, govulncheck, Docker 27.5.1, `redis:7.4-alpine`.
+
+### 1. Verification of #112–#122
+
+| # | Repro blocked? | Controls redone? | Regression? | Notes |
+| --- | --- | --- | --- | --- |
+| #112 | Yes — `TestConcurrentCallsWithDifferentTagsDoNotShareALoad`, `TestReadAfterInvalidateTagDoesNotJoinAnOlderLoad` pass | Yes — `flightKey` reverted to pre-fix (`pk` alone); both tests fail with a caller receiving another owner's/older value. Restored | No, on the path the fix covers. **But see #134**: the fix left the `GetTagged`-error path open to the same cross-owner join | Deep dive below |
+| #113 | Yes — `TestInFlightReadCannotRestoreRetiredGenerations` passes | Yes — `genCache.put`'s epoch/clears/drops check disabled; fails with a retired entry served as a hit. Restored | No | Read `gencache.go` in full for #135, below |
+| #114 | N/A (documentation) | N/A | No — "separate instance" and the logical-DB-is-not-enough statement are consistent across `THREAT-MODEL.md`, `REQUIREMENTS.md`, `SECURITY.md`, `README.md`, `redisstore/README.md` and ADR-0010's amendment | — |
+| #115 | Yes | Yes, both halves independently, in a scratch worktree: (a) a tag on a commit not reachable from `origin/main` is refused by the ancestry check alone; (b) the same tag's signature fails verification against `origin/main`'s `allowed_signers` alone (the attacker's key is not in it). Both reproduce the issue's exact PoC | No — `no-replace.sh` still passes on the real `go.mod`, `check-docs.sh` passes | RELEASING.md's stated limit ("a tag whose commit also rewrites the workflow skips these checks... a tag ruleset is the control") is honest, but **see #136**: that control does not exist yet |
+| #116 | Yes — reproduced the exact PoC (`require` at `v0.1.0` + `replace => ../`) in a scratch worktree; `no-replace.sh` refuses it | Yes — same PoC | No — wired into both `release.yml` and CI's `satellite-resolution` job | — |
+| #117 | Yes — `New`/`Subscribe` no longer error when Redis is unreachable | N/A (the fix is a removed error path, not a guard to disable) | **Yes, on the shutdown path — see #137** | Deep dive below |
+| #118 | Yes — `TestHookEventsWithholdTheKeyByDefault` fires and checks all six kinds | Yes — `onLoad`, `onCoalesced` and `onError` each reverted to pass `key` directly, one at a time; the test catches all three. Restored | No | The 20ms-sleep synchronisation was stress-tested, see below; empirically robust but structurally worth hardening (Observations) |
+| #119 | Yes | Yes (already covered by `TestBusIgnoresEventsItCannotTrust`'s control table) | No | Extra probes below confirm hashed-key and boundary handling |
+| #120 | Yes (RS-09 refuses a wide ACL) | Could not be isolated in the file as written, but **was isolated** by reordering the checks in a scratch copy — see below | No | Test-hygiene observation, not a finding |
+| #121 | Yes — `TestBusConformance/UnsubscribeStopsDelivery` passes under `-race`, unit and integration | Yes — `sync.Once` reverted to an unsynchronised `bool`; `-race` catches the data race immediately, both for `bus.Local`'s conformance run and redisstore's. Restored | No | — |
+| #122 | N/A (documentation/release criterion) | N/A | No | `ExampleCache_GetOrLoad`, `ExampleCache_InvalidateTag` and `ExampleWithBus` each genuinely exercise the RF they claim (traced against `cache.go`/`tags.go`/`bus/bus.go`), and all pass as runnable examples |
+
+**#112/#113 deep dive.** Read `gencache.go`, `tags.go`, `events.go` and
+`cache.go` in full, not only the tests. The epoch/drops/clears protocol in
+`genCache` (`gencache.go:30-98`) is sound for the interleaving #113 named, and
+`flightKey`'s inclusion of tag generations (`cache.go:465-476`) is sound for
+the interleaving #112 named. Pushing on the *unnamed* interleavings found one
+real gap: when `readTagged`'s `GetTagged` call fails, `flightKey` collapses
+every caller onto a fixed sentinel (`pk+"\x00?"`) regardless of owner, so two
+owners whose reads fail concurrently can still join one flight and cross —
+**#134 (HIGH)**. Also read `genCache.drop` (called both by `InvalidateTag`
+and, untrusted, by `onEvent`'s `KindTag` handling) against `put`'s bound and
+found it has none — **#135 (MEDIUM)**.
+
+**#117 deep dive**, against the brief's specific questions:
+
+- *How long does `New` block when Redis drops packets rather than refusing
+  the connection?* Tested against `10.255.255.1:6379` (silently dropped,
+  unlike `127.0.0.1:<closed>` which refuses instantly): `Subscribe` returned
+  in 1.00s, matching the documented `DefaultTimeout*10` bound. Correct.
+- *Does anything else still assume "ready when `Subscribe` returns"?*
+  `cache.go:134-138` is the only call site; nothing else depends on Bus
+  readiness at construction.
+- *Does reconnection work after a mid-run outage, not just at startup?*
+  `integration_reconnect_test.go` has exactly one test, and it covers an
+  outage that predates `Subscribe` (a startup outage). Wrote a temporary test
+  that subscribes while Redis is reachable, publishes and confirms delivery,
+  closes the path to Redis for 500ms, reopens it, and confirms delivery
+  resumes within 20s: **it does** (21.8s total, most of it container
+  start-up). This is a real behaviour gap in test *coverage*, not in
+  behaviour — worth a permanent regression test, not a finding.
+- *Does anything leak if `Close` is never called?* Not probed directly this
+  pass (no new evidence beyond the original audit's read of `bus.Local`'s
+  `sync.Once` and `redisstore.Bus`'s handlers). Follow-up: **the inverse
+  question, what happens when `Close` *is* called during an outage, turned up
+  #137 (MEDIUM)** — `unsub()` (`Cache.Close`'s path) blocked 10.1s at
+  go-redis's default `DialTimeout` and 1m40s at an explicit 50s one, against
+  `Subscribe`'s own correctly-bounded 1.0s.
+
+**#118 stress test.** `TestHookEventsWithholdTheKeyByDefault`'s 20ms sleep
+bridges an inherently racy window (the joining caller's L2 miss to it
+registering in the flight) with a fixed constant rather than the deterministic
+`flights.Waiting(pk) == n` polling `coalesce_internal_test.go`'s `joinAll`
+helper uses for the same purpose elsewhere in this package. Ran it 700 times
+total: 100x at `GOMAXPROCS=1`, 300x under artificial CPU load (`yes` on every
+core), 300x at `GOMAXPROCS=2` under that same load. **Zero failures.** It
+cannot "pass without proving anything" — a lost race would make the join fail
+and fall back to an independent load, which the test's own "no %s event
+fired" assertion would catch as a hard failure, not a silent pass. So the
+worst case is flakiness, and none was reproduced despite deliberately trying.
+Recorded as an observation, not a finding, per the brief's own rule: no
+failure shown, no finding filed.
+
+**#119 extra probes**, per the brief: a legitimate hashed-key event
+(`WithKeyHashing`, real cross-replica `Delete`) reports an **empty** `Key` in
+the `OnInvalidate` hook even with `WithHookKeys()` — confirmed with a
+dedicated test (`eventKey`'s "" for the `h:` branch holds in practice, not
+only in the comment). `MaxKeyBytes` boundary (`len(key) <= MaxKeyBytes`) is
+consistent between `validateKey`'s own limit and `eventKey`'s check, no
+off-by-one. A name matching the prefix but neither `k:` nor `h:`, and a name
+from a different namespace that merely looks like a prefix match, are both
+already covered by `TestBusIgnoresEventsItCannotTrust` and were re-verified
+by reading `strings.CutPrefix`'s exact-match semantics against ADR-0008's key
+format (fixed-count components cannot contain the separator, so no partial-
+prefix collision is possible).
+
+**#120 isolation.** The brief asked to get the SUBSCRIBE-outside-`cistern:*`
+assertion (`integration_test.go:226-230`) to fail on its own, or say why not.
+Root cause: it cannot fail on its own **in the file as written**, because the
+PUBLISH-outside-channels check three lines above it (`:223`) calls
+`t.Fatalf` first, and Redis ACL's `&pattern` gates PUBLISH and SUBSCRIBE
+channels with the same primitive — there is no way to loosen one without the
+other, so any control that would break the SUBSCRIBE check also breaks the
+PUBLISH check, which always reports first. **Isolated it anyway**: in a
+scratch copy, with the two checks reordered (SUBSCRIBE first) and the
+existing `&cistern:*` → `&*` control applied, the SUBSCRIBE assertion fails
+on its own: `SUBSCRIBE outside cistern's channels: err = <nil>, want NOPERM`.
+The security property holds; the test file's ordering is what made it look
+unverifiable. Not a finding (the ACL is correct); a test-hygiene observation.
+
+### 2. Coverage the first audit's scope note left open
+
+**Pinned Go floors** (`GOWORK=off`, no silent toolchain upgrade, ADR-0013).
+The first audit ran everything on 1.27.1 without exercising either floor.
+
+```
+core:       GOTOOLCHAIN=go1.24.0 go build/vet/test -race ./...   -> all green
+redisstore: GOTOOLCHAIN=go1.25.0 go build/vet/test -race ./...   -> all green
+redisstore: GOTOOLCHAIN=go1.25.0 go test -tags=integration -race -> all green
+```
+
+Both floors build, vet and test clean, including the redisstore integration
+suite against real Redis at its own floor. `examples` also rebuilt and
+retested clean under 1.27.1 (its floor is not separately pinned).
+
+**`/security-review` and `/code-review`.** `/security-review` is diff-based
+and, invoked from this environment, resolved against a different repository
+in the same session with an unrelated two-file documentation diff; that
+output is not applicable to this audit and was discarded rather than forced.
+`/code-review high` with an explicit path target reviewed the tip commit's
+diff (`1e11af6`, the #122 Examples) and found nothing — consistent with this
+session's own reading of the same commit. Neither tool substitutes for the
+manual read of `cache.go`, `tags.go`, `gencache.go`, `events.go`, `hooks.go`,
+`redisstore/bus.go`, `redisstore/redisstore.go`, `release.yml` and the
+`.github/scripts/*.sh` scripts this session did directly, which is where
+#134, #135 and #137 came from.
+
+**Fuzzing, 5 minutes each** (brief §2.6), longer than CI's run:
+
+| Target | Duration | Executions | New interesting corpus entries | Result |
+| --- | --- | --- | --- | --- |
+| `internal/envelope` `FuzzDecode` | 5m | 24,434,091 | 0 (stable at 30) | PASS, no crasher |
+| `bus` `FuzzDecode` | 5m | 10,414,402 | 63 (30 → 743, no new *failures*) | PASS, no crasher |
+
+No new files under `testdata/fuzz/`: nothing found rose to the level of a
+persisted regression corpus entry (that only happens on a failure). `git
+status` after both runs showed no fuzz-related changes.
+
+**TLS.** Not exercised by the first audit or by CI (`redisstore/README.md`
+says so: TLS is go-redis's code path, not `redisstore`'s). This pass built a
+Redis container that accepts **only** TLS (self-signed CA, SAN for
+`127.0.0.1`, `--tls-auth-clients no`, no plaintext port at all) and ran
+`Store.Set`/`Get` and `Bus.Subscribe`/`Publish` against it through a
+`*redis.Client` with `TLSConfig` set. Both worked end to end. A plaintext
+client against the same address was confirmed to fail, so the positive result
+is not a fallback artifact. This is not a claim that `cistern` implements
+TLS — it doesn't, deliberately (ADR-0001) — only that the documented "bring
+your own `TLSConfig`" story actually works.
+
+**Sentinel.** Also not exercised before. Stood up a real `redis-server` plus
+`redis-sentinel` (`sentinel monitor`, Docker, host-published ports so
+`SENTINEL get-master-addr-by-name` resolves to something the test process can
+actually reach — Sentinel's advertised address is otherwise the container's
+internal IP, unreachable from the host on Docker Desktop). Built a client
+with `redis.NewFailoverClient` (the type `redisstore.New`/`NewBus` already
+accept, since it returns the same `*redis.Client`) and ran the same
+Set/Get/Subscribe/Publish sequence through it. All passed. A live failover
+(killing the master mid-test and confirming Sentinel promotes a replica and
+the client follows) was not attempted — this repository has no replica
+topology configured for it, and building one is closer to the sapper
+scenarios below than to this probe.
+
+**sapper scenarios 1–6.** Still out of scope, and re-confirmed why: issue
+#67 states they run "against task-api after T2" — the `task-api` integration
+track has not started (§13 of `REQUIREMENTS.md`; T0–T3 are listed as future
+work). There is no `task-api` deployment in this repository to run them
+against yet. This is unchanged from the first audit's scope note.
+
+### 3. Summary of new findings
+
+| # | Severity | Finding | Issue |
+| --- | --- | --- | --- |
+| RE-01 | **HIGH** | A tagged cache's `GetTagged` failure collapses `flightKey` onto a fixed sentinel regardless of owner, so two owners whose reads fail concurrently can still join one flight and cross (T-01, the same class #112 fixed for the normal-read path) | #134 |
+| RE-02 | MEDIUM | `genCache.drop` has no cardinality bound, unlike `put`; untrusted Bus tag events can grow it without limit until the next unrelated successful tagged read wipes it (T-06) | #135 |
+| RE-03 | LOW | No GitHub tag ruleset exists; #115's named compensating control is undeployed and absent from the pre-release checklist (unlike the vulnerability-reporting item next to it) | #136 |
+| RE-04 | MEDIUM | `Cache.Close` blocks for roughly 2x the Redis client's `DialTimeout` when Redis is unreachable at the moment `Close` is called — the shutdown-side mirror of #117 (T-12) | #137 |
+
+No finding is fixed in this PR (brief §3). Each needs its own PR, or an ADR
+that accepts the risk (`REQUIREMENTS.md` §13, C8), same as the first pass.
+
+## Observations (re-audit): not findings
+
+- **#118's fixed-sleep synchronisation** (`hooks_test.go:103`) survived 700
+  stress runs (100x `GOMAXPROCS=1`, 300x under CPU load, 300x
+  `GOMAXPROCS=2` under CPU load) with zero flakes, and a lost race would fail
+  loudly rather than pass silently. Still worth switching to the deterministic
+  `flights.Waiting`-based pattern `joinAll` already uses elsewhere in this
+  package, so this doesn't need re-deriving next time.
+- **#120's SUBSCRIBE-outside-`cistern:*` assertion** cannot fail on its own in
+  `integration_test.go` as written (the PUBLISH check three lines above it
+  always reports first, and Redis ACL has no primitive to loosen one channel
+  operation without the other). Isolated by reordering in a scratch copy: it
+  does fail correctly on its own. Worth reordering the two checks (or adding
+  a dedicated sub-test) so this doesn't need re-deriving next audit either.
+- **golangci-lint v2.12.2 cannot typecheck under Go 1.27.1's standard
+  library** (`crypto/internal/randutil` vs. `math/rand/v2`) — an environment
+  version mismatch between the locally installed Go and the lint tool, not a
+  project defect. Confirmed clean (0 issues, both modules) once pinned to
+  `GOTOOLCHAIN=go1.26.5`, the version CI actually uses.
+- **gosec, govulncheck**: 0 issues / no vulnerabilities in core, redisstore
+  and examples, current toolchain.
+- **Core statement coverage**: 90.6% (`-coverpkg=./...`), against the 85%
+  floor — consistent with the first audit's 90.7%, no regression.
+
+## Scope note: what this re-audit did not cover
+
+- **A live Sentinel failover** (killing the master and watching the client
+  follow a promotion). The static Sentinel-routing path was proven; the
+  dynamic failover path was not, for the reason given above.
+- **The release workflow actually running on GitHub** (`actions/checkout@v7`
+  and the annotated-tag question) — still reasoned about and run locally
+  only, same as the first audit.
+- **Benchmarks (RNF-06) and RNF-11** under a real multi-replica deployment.
+  Not attempted this pass either.
+- **Whether `#134`'s and `#135`'s fixes, once written, reopen anything** —
+  by construction, since they are not fixed in this PR.
+- **A full independent pass over `examples`** beyond what #122's verification
+  and the RS-02/RS-04 evidence already touch.
