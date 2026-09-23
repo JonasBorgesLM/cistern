@@ -20,11 +20,10 @@ Requirements live in [`REQUIREMENTS.md`](REQUIREMENTS.md) and are cited by id
 
 ## Current phase
 
-**C6 done; C7 (hooks & examples) next.** `Cache[K,V]` (`Get`, `GetOrLoad`,
-`Set`, `Delete`, `InvalidateTag`, `Close`, backfill, options, key validation,
-`NoCache`), `bus`, `internal/singleflight`, `internal/envelope`, `memory`,
-`codec`, `cisterntest` and the `redisstore` module (Store, TagStore, Bus)
-exist. Nothing is released. Work
+**C7 done; C8 (validation & release) next.** The library is feature-complete
+for v0.1: `Cache[K,V]` with tags, Bus and hooks; `bus`, `memory`, `codec`,
+`cisterntest`, `internal/…`; the `redisstore` module (Store, TagStore, Bus);
+and the `examples` module. Nothing is released. Work
 is tracked on the [project board](https://github.com/users/JonasBorgesLM/projects/6), grouped
 C0–C8 plus the task-api track T0–T3 (`REQUIREMENTS.md` §13). Do not write
 implementation code without an issue that says to, and write the phase's
@@ -38,7 +37,7 @@ planned ADR (`docs/adr/README.md`, "Planned") before its code.
 | --- | --- | --- |
 | `.` | core | **No `require` at all** — CI's `dependency-policy` enforces it |
 | `redisstore/` | Redis L2, tag generations, Pub/Sub Bus | go-redis; testcontainers (test only); core pinned by pseudo-version until the first core tag |
-| `examples/` | not published | task-api decorator, bastion, crier. Arrives in C7 |
+| `examples/` | not published | task-api decorator, bastion Guard, crier hooks, moat secrets; pins bastion/crier/moat releases |
 
 `memory/`, `codec/`, `envelope/`, `bus/`, `cisterntest/` and `internal/` will be
 packages of the core module, not modules.
