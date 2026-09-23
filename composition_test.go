@@ -40,12 +40,10 @@ func TestL2HitBackfillsL1(t *testing.T) {
 // its TTL is the smaller of the L1 TTL and what the L2 entry has left.
 // Negative control: verified failing with the clamp to the L2 expiry removed.
 func TestBackfillNeverOutlivesTheL2Entry(t *testing.T) {
-	ctx := context.Background()
-
 	t.Run("L2 entry expires first", func(t *testing.T) {
 		c, l1, l2 := twoLevels(t, cistern.WithL1TTL(30*time.Second))
 		plant(t, l2, envelope.Entry{Codec: "json", Expires: time.Now().Add(2 * time.Second), Payload: []byte(`"v"`)})
-		if _, ok, _ := c.Get(ctx, "k"); !ok {
+		if _, ok, _ := c.Get(context.Background(), "k"); !ok {
 			t.Fatal("miss")
 		}
 		if got := l1.ttls[pk]; got <= 0 || got > 2*time.Second {
@@ -56,7 +54,7 @@ func TestBackfillNeverOutlivesTheL2Entry(t *testing.T) {
 	t.Run("L1 TTL is shorter", func(t *testing.T) {
 		c, l1, l2 := twoLevels(t, cistern.WithL1TTL(5*time.Second))
 		plant(t, l2, envelope.Entry{Codec: "json", Expires: time.Now().Add(time.Hour), Payload: []byte(`"v"`)})
-		if _, ok, _ := c.Get(ctx, "k"); !ok {
+		if _, ok, _ := c.Get(context.Background(), "k"); !ok {
 			t.Fatal("miss")
 		}
 		if got := l1.ttls[pk]; got != 5*time.Second {

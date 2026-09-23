@@ -66,18 +66,19 @@ func wantValue(t *testing.T, s cistern.Store, key string, want []byte) {
 	}
 }
 
-func wantMiss(t *testing.T, s cistern.Store, key string) {
+// wantMiss asserts that keyA is a miss.
+func wantMiss(t *testing.T, s cistern.Store) {
 	t.Helper()
-	got, ok, err := s.Get(context.Background(), key)
+	got, ok, err := s.Get(context.Background(), keyA)
 	if err != nil || ok {
-		t.Fatalf("Get(%q) = %q, %v, %v; want a miss: _, false, nil", key, got, ok, err)
+		t.Fatalf("Get(%q) = %q, %v, %v; want a miss: _, false, nil", keyA, got, ok, err)
 	}
 }
 
 // A miss is (_, false, nil). An error means the store could not answer, and
 // cistern would count every miss as an outage.
 func missingKeyIsAMiss(t *testing.T, s cistern.Store) {
-	wantMiss(t, s, keyA)
+	wantMiss(t, s)
 }
 
 func setThenGet(t *testing.T, s cistern.Store) {
@@ -98,7 +99,7 @@ func deleteRemoves(t *testing.T, s cistern.Store) {
 	if err := s.Delete(context.Background(), keyA); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	wantMiss(t, s, keyA)
+	wantMiss(t, s)
 	if err := s.Delete(context.Background(), keyA); err != nil {
 		t.Fatalf("Delete of a missing key: %v, want nil", err)
 	}
@@ -110,7 +111,7 @@ func keysAreIndependent(t *testing.T, s cistern.Store) {
 	if err := s.Delete(context.Background(), keyA); err != nil {
 		t.Fatal(err)
 	}
-	wantMiss(t, s, keyA)
+	wantMiss(t, s)
 	wantValue(t, s, keyB, []byte("b"))
 }
 
@@ -164,7 +165,7 @@ func nonPositiveTTLIsRejected(t *testing.T, s cistern.Store) {
 			t.Errorf("Set with ttl %v = nil error, want an error", ttl)
 		}
 	}
-	wantMiss(t, s, keyA)
+	wantMiss(t, s)
 }
 
 // ADR-0014: callers never share bytes with the store.
@@ -198,7 +199,7 @@ func cancelledContextIsAnError(t *testing.T, s cistern.Store) {
 	if err := s.Delete(ctx, keyA); err == nil {
 		t.Error("Delete with a cancelled context = nil error")
 	}
-	wantMiss(t, s, keyA)
+	wantMiss(t, s)
 }
 
 // RNF-05: safe for concurrent use. Every value is its own key, so a torn or
