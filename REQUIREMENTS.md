@@ -309,5 +309,6 @@ supersession.
 
 - ~~Exact physical key format (separator, opt-in hashing threshold).~~
   Decided in ADR-0008.
-- Final public API naming (a synonym-free review, as done in `moat`).
+- ~~Final public API naming (a synonym-free review, as done in `moat`).~~
+  Decided in #13.
 - Which `task-api` endpoint goes first: depends on the T0 result.
