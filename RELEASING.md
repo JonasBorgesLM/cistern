@@ -1,8 +1,8 @@
 # Releasing
 
-> **Nothing has been released yet.** The release workflow (`release.yml`) is
-> delivered in phase C8; until then this document is the procedure it must
-> implement.
+> **Nothing has been released yet.** [`release.yml`](.github/workflows/release.yml)
+> implements the checks below; it cannot publish anything until
+> `.github/allowed_signers` holds a key (see *Before the first tag*).
 
 Modules are versioned and tagged independently (ADR-0001, RNF-10). The tag
 prefix selects the module.
@@ -67,6 +67,25 @@ has no workspace. Tagging `redisstore` first publishes a release nobody can
 
 Tags are cut on `main`, and every release commit is made there; `main` is then
 merged back into `develop` (see [`CONTRIBUTING.md`](CONTRIBUTING.md#develop-and-main)).
+
+## What the release workflow checks
+
+Everything that can fail is checked before the GitHub Release exists, because
+a tag is immutable once anyone has fetched it. For the tagged module, with no
+workspace — the resolution a consumer gets:
+
+- the tag maps to a module, and every module in the tree has a tag pattern or
+  a recorded exclusion (`examples` is never published);
+- `go mod verify`, build, vet and `-race` tests **at the module's own floor**,
+  with `GOTOOLCHAIN=local`, so the notes' claim about the floor is true;
+- for `redisstore`: the integration suite against a real Redis, and a core
+  requirement that is a **released version, not a pseudo-version**
+  ([`released-version.sh`](.github/scripts/released-version.sh));
+- for the core: still no dependency at all (ADR-0001);
+- the documentation checks, and `govulncheck` on the newest toolchain;
+- the API diff against this module's previous tag, read from local history;
+- the tag's SSH signature, against `.github/allowed_signers` — an empty file
+  fails closed.
 
 ## Release notes
 
