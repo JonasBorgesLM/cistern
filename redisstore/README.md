@@ -86,8 +86,10 @@ this module's.
 policy: losing a cached value costs a miss, never a wrong answer
 ([ADR-0010](../docs/adr/0010-lru-eviction-is-safe-for-cached-values.md)). It is
 the deliberate opposite of what `moat`'s rate limiter and `cairn`'s link store
-require (`noeviction`), so **never share an instance or logical database with
-them**: their keys would be evicted under cistern's memory pressure. Tag
+require (`noeviction`), so **never share an instance with them**: their keys
+would be evicted under cistern's memory pressure. A separate logical database
+(`SELECT 1`) does not help — `maxmemory` and its policy apply to the whole
+instance, and `allkeys-lru` evicts from every database on it. Tag
 generation counters are evicted like anything else, and that is safe: a
 missing counter comes back at an unpredictable value, so the entries of its tag
 become misses and nothing retired is ever served again
