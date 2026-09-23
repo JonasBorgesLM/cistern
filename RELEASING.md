@@ -54,6 +54,20 @@ has no workspace. Tagging `redisstore` first publishes a release nobody can
   # {"enabled":true}
   ```
 
+- **A tag ruleset restricts who can create release tags** (#136). The release
+  workflow's signature check runs from the tagged commit and does not stop
+  someone with tag-push rights (see *What the release workflow checks*); this
+  ruleset does. It must cover creation, update and deletion of `refs/tags/v*`
+  and `refs/tags/redisstore/v*`, with no bypass except the owner:
+
+  ```bash
+  for id in $(gh api repos/JonasBorgesLM/cistern/rulesets --jq '.[] | select(.target=="tag") | .id'); do
+    gh api "repos/JonasBorgesLM/cistern/rulesets/$id" \
+      --jq '{name, enforcement, include: .conditions.ref_name.include, rules: [.rules[].type]}'
+  done
+  # enforcement "active"; include both patterns; rules creation, update, deletion
+  ```
+
 - **The physical key schema (`v1`, ADR-0008) and the envelope version freeze
   with `redisstore`.** Changing either later loses no data — this is a cache —
   but every replica starts cold and mixed-version replicas stop sharing entries
@@ -96,7 +110,8 @@ tagged commit, so a tag whose commit also rewrites the workflow skips them;
 and the module proxy serves any pushed tag, whether or not the GitHub Release
 was created. They catch a mistake and an unreviewed signer; they do not stop
 someone with tag-push rights. That is a repository tag ruleset restricting
-who can create `v*` and `redisstore/v*` tags.
+who can create `v*` and `redisstore/v*` tags — a checklist item in *Before the
+first tag of a module*.
 
 ## Release notes
 
