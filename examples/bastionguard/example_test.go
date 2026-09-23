@@ -24,5 +24,5 @@ func ExampleGuard() {
 	if err != nil {
 		panic(err)
 	}
-	_ = l2 // cistern.WithL2(l2)
+	_ = l2 // pass to the cache as its L2
 }
