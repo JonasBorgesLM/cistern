@@ -82,7 +82,9 @@ records its owner's tag generation, which never matches another owner's, so
 it reads as a miss for anyone else even if the key omitted the owner (ADR-0005;
 proven by `examples/taskapi`). Concurrent loads are keyed by those generations
 too, so the barrier also holds for a caller that arrives while another owner's
-load is in flight (ADR-0007 as amended; found by the audit, #112).
+load is in flight (ADR-0007 as amended; found by the audit, #112), including
+while the generations cannot be read, when loads are keyed by the tags
+instead (#134, found by the re-audit).
 
 **Residual:** a consumer whose key function and tag function both omit the
 owner defeats this; see §7.
