@@ -210,11 +210,13 @@ independent of the request deadline), RNF-04 (`Guard` circuit breaker, with
 writer invalidates, and the reader stores the old value afterwards; users see
 stale data until expiry.
 
-**Mitigation:** short TTLs on write-exposed entries, tag invalidation
-(RF-10), bounded multi-replica staleness (RNF-11); recorded as an accepted
-risk in ADR-0011.
+**Mitigation:** for tag invalidation the race is closed — entries record the
+tag generations read before the load, so a bump during the load makes the
+entry stale on arrival (RF-10, ADR-0005, ADR-0011). For an untagged `Delete`:
+short TTLs on write-exposed entries and coalescing (RF-05).
 
-**Residual:** the window is bounded, not closed. See §7.
+**Residual:** an untagged key written concurrently with a `Delete` may be
+stale for up to its TTL (ADR-0011). See §7.
 
 ### T-14 — Evicted generation counter resurrects invalidated entries
 
@@ -223,11 +225,12 @@ delete a key. **Impact:** a tag's generation counter is evicted and recreated
 at a value used before; entries retired by an earlier `InvalidateTag` become
 reachable again and are served as current.
 
-**Mitigation:** RF-10 as constrained by ADR-0010 — a missing generation counter
-must never restart at a value that could have been used before. The mechanism
-is ADR-0005's (C6).
+**Mitigation:** RF-10 as constrained by ADR-0010: a missing counter is
+recreated at an unpredictable value in [1, 2⁶²), so its tag's entries become
+misses rather than current (ADR-0005). The conformance suite checks it for
+every `TagStore`.
 
-**Residual:** open until ADR-0005 is accepted.
+**Residual:** none known; the cost of an evicted counter is misses.
 
 ### Coverage
 
@@ -246,7 +249,7 @@ is ADR-0005's (C6).
 | T-11 Penetration | RF-06 |
 | T-12 Redis outage | RNF-02, RNF-03, RNF-04 |
 | T-13 Cache-aside race | RF-10, RNF-11 |
-| T-14 Generation counter evicted | RF-10 (ADR-0010, ADR-0005) |
+| T-14 Generation counter evicted | RF-10 (ADR-0005, ADR-0010) |
 
 RS-11 is discharged by this document itself.
 
@@ -298,7 +301,6 @@ would look more complete than it is:
   over what the cache serves until expiry.
 - **DNS- or network-level compromise between the host and Redis**, beyond what
   TLS (RS-09) already covers.
-- **A cache-aside race under sustained write pressure** (T-13). The MVP
-  mitigation bounds the exposure window; it does not close it. Closing it
-  fully would require delayed double delete or a versioned write path, both
-  deferred (`REQUIREMENTS.md` §8.4, ADR-0011).
+- **A cache-aside race on untagged keys** (T-13). Tag invalidation closes it;
+  an untagged `Delete` racing a load can leave a stale value for up to its TTL
+  (ADR-0011).
