@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -49,9 +51,15 @@ func (b *Bus) Publish(ctx context.Context, e bus.Event) error {
 	return nil
 }
 
-// Subscribe starts delivering events to h and returns once the subscription
-// is confirmed, so nothing published afterwards is missed. Messages are
-// untrusted (RS-07): a malformed one is dropped and the subscription goes on.
+// Subscribe starts delivering events to h. It waits a bounded time for Redis
+// to confirm the subscription, so that when Redis is up nothing published
+// after Subscribe returns is missed. When Redis is unreachable it does not
+// fail: go-redis keeps reconnecting and resubscribing, and delivery starts
+// once Redis is back — events published in between are missed, the
+// best-effort cost ADR-0006 accepts. Failing instead would make cistern.New
+// fail during an outage, turning a Redis outage into a startup outage
+// (ADR-0002, #117). Messages are untrusted (RS-07): a malformed one is
+// dropped and the subscription goes on.
 func (b *Bus) Subscribe(h bus.Handler) (func(), error) {
 	if h == nil {
 		return nil, errors.New("redisstore: nil handler")
@@ -59,9 +67,7 @@ func (b *Bus) Subscribe(h bus.Handler) (func(), error) {
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout*10)
 	defer cancel()
 	ps := b.client.Subscribe(ctx, Channel)
-	if _, err := ps.Receive(ctx); err != nil {
-		return nil, errors.Join(fmt.Errorf("redisstore: subscribe: %w", err), ps.Close())
-	}
+	_, _ = ps.Receive(ctx) //nolint:errcheck // Redis unreachable is not an error here: ps.Channel keeps reconnecting and resubscribing
 	messages := ps.Channel()
 	done := make(chan struct{})
 	go func() {
@@ -74,16 +80,28 @@ func (b *Bus) Subscribe(h bus.Handler) (func(), error) {
 			h(e)
 		}
 	}()
-	var closed bool
+	// Once, not a flag: Cache.Close may be called concurrently (#121), and a
+	// second call must also wait for the first to finish.
+	var once sync.Once
 	return func() {
-		if closed {
-			return
-		}
-		closed = true
-		err := ps.Close()
-		<-done
-		if err != nil {
-			return // unsubscribe has no error result; the connection is released either way
-		}
+		once.Do(func() {
+			// With Redis unreachable, ps.Close waits for go-redis to finish a
+			// background redial, which only the client's dial timeout ends —
+			// and Close is on every shutdown path (#137, T-12). So the wait is
+			// bounded like Subscribe's: past it, unsubscribe returns and the
+			// goroutine ends when the dial does. An event arriving in that
+			// window can still reach h once, which an invalidation tolerates.
+			// The error has nowhere to go; the connection is released anyway.
+			stopped := make(chan error, 1)
+			go func() {
+				err := ps.Close()
+				<-done
+				stopped <- err
+			}()
+			select {
+			case <-stopped:
+			case <-time.After(DefaultTimeout * 10):
+			}
+		})
 	}, nil
 }

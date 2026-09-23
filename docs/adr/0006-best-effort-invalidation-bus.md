@@ -53,3 +53,27 @@ type Event struct {
 
 ## Open
 None.
+
+## Amendment (audit finding #117)
+"A cache subscribes in `New`" had a consequence the decision did not weigh:
+the Redis Bus refused to subscribe while Redis was unreachable, so `New`
+failed with `ErrInvalidConfig` and a replica could not start during an outage
+— a Redis outage turned into an application outage, against ADR-0002.
+
+The Redis Bus now waits a bounded time for the subscription to be confirmed
+and, if Redis does not answer, returns without an error: go-redis keeps
+reconnecting and resubscribing, and delivery starts once Redis is back. Events
+published before then are missed, which is the reconnecting-subscriber case
+the Consequences already accept, bounded by one L1 TTL. `Subscribe` still
+fails on a configuration error such as a nil handler.
+
+## Amendment (re-audit finding #137)
+The #117 amendment bounded subscribing while Redis is unreachable but not
+unsubscribing, which `Close` does on every shutdown: go-redis's `Close` waits
+for a background redial that only the client's dial timeout ends, about twice
+that timeout in practice (10s at go-redis's default).
+
+Unsubscribing now waits the same bound as subscribing and then returns;
+the redial ends on its own, bounded by the dial timeout. The cost: an event
+that arrives in that window can still reach the handler once, which an
+invalidation tolerates.

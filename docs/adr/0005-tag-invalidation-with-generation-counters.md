@@ -97,3 +97,11 @@ full it is cleared, which costs round trips, never correctness.
 
 ## Open
 None.
+
+## Amendment (audit finding #113)
+"The copy is dropped immediately … on the instance's own `InvalidateTag`" was
+not enough: a read that fetched generations before the drop could put them
+back after it, and the instance that had just invalidated kept serving its
+retired L1 copy. The local copy now refuses a put from any read that began
+before a drop of one of its keys (or a clear of the whole copy). The same rule
+covers drops caused by Bus events.

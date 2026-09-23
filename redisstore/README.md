@@ -78,6 +78,13 @@ Use your own password, not the one above. Each permission is there because
 the suite fails without it: `mget`, `incr` and `pexpire` for tag generations,
 `publish`, `subscribe` and the `&cistern:*` channel for the Bus.
 
+Expect two kinds of denial in `ACL LOG` from this user, both harmless:
+`client|setinfo`, which go-redis sends on each new connection, and `ping`,
+which it sends every few seconds to health-check an idle Bus subscription.
+Neither is needed, the subscription keeps delivering, and granting them would
+widen the user for no function; filter them out of whatever alerts on
+`ACL LOG` so real denials stand out.
+
 **TLS** outside local development, through the client's `TLSConfig`. The
 integration suite does not exercise TLS; that is go-redis's code path, not
 this module's.
@@ -86,8 +93,10 @@ this module's.
 policy: losing a cached value costs a miss, never a wrong answer
 ([ADR-0010](../docs/adr/0010-lru-eviction-is-safe-for-cached-values.md)). It is
 the deliberate opposite of what `moat`'s rate limiter and `cairn`'s link store
-require (`noeviction`), so **never share an instance or logical database with
-them**: their keys would be evicted under cistern's memory pressure. Tag
+require (`noeviction`), so **never share an instance with them**: their keys
+would be evicted under cistern's memory pressure. A separate logical database
+(`SELECT 1`) does not help — `maxmemory` and its policy apply to the whole
+instance, and `allkeys-lru` evicts from every database on it. Tag
 generation counters are evicted like anything else, and that is safe: a
 missing counter comes back at an unpredictable value, so the entries of its tag
 become misses and nothing retired is ever served again

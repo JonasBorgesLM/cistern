@@ -80,7 +80,11 @@ trying to read another user's data).
 A tag that carries the owner is a second, independent barrier: an entry
 records its owner's tag generation, which never matches another owner's, so
 it reads as a miss for anyone else even if the key omitted the owner (ADR-0005;
-proven by `examples/taskapi`).
+proven by `examples/taskapi`). Concurrent loads are keyed by those generations
+too, so the barrier also holds for a caller that arrives while another owner's
+load is in flight (ADR-0007 as amended; found by the audit, #112), including
+while the generations cannot be read, when loads are keyed by the tags
+instead (#134, found by the re-audit).
 
 **Residual:** a consumer whose key function and tag function both omit the
 owner defeats this; see §7.
@@ -138,10 +142,14 @@ cache; see §7.
 
 **Actor:** Redis-adjacent attacker. **Impact:** bounded — extra L1 misses.
 
-**Mitigation:** RS-07 (the Bus carries invalidation only, never values).
+**Mitigation:** RS-07 (the Bus carries invalidation only, never values). The
+state an event can create is bounded: however many distinct tags a flood
+names, the local copy of generations stays under its limit (#135, found by the
+re-audit).
 
-**Residual:** a flood of forged invalidations degrades hit rate to zero, which
-is a performance loss, not a correctness or confidentiality loss.
+**Residual:** a flood of forged invalidations degrades hit rate to zero, and
+each time it fills the local copy of generations clears it, costing round
+trips — a performance loss, not a correctness or confidentiality loss.
 
 ### T-07 — Keys leaking into logs and metrics
 
@@ -167,12 +175,15 @@ TLS on a local development Redis.
 ### T-09 — Wrong eviction policy or a shared Redis database
 
 **Actor:** none — a misconfiguration. **Impact:** with `noeviction` the cache
-fills Redis and writes fail; sharing a database with `moat`'s rate limiter or
-`cairn`'s link store lets cache pressure evict their data.
+fills Redis and writes fail; sharing an instance with `moat`'s rate limiter or
+`cairn`'s link store lets cache pressure evict their data. A separate logical
+database does not prevent it: `maxmemory` and `maxmemory-policy` are
+instance-wide, and `allkeys-lru` evicts from every database on the instance
+(#114).
 
 **Mitigation:** RS-10 (`allkeys-lru` documented as correct *for cached values*, ADR-0010 —
 the explicit contrast with `moat`, where the same policy caused a bypass; a
-separate instance/logical DB recommended).
+separate instance required — a logical database is not enough).
 
 **Residual:** documentation only; `redisstore` does not verify the policy at
 startup in the MVP.
@@ -206,7 +217,10 @@ request.
 
 **Mitigation:** RNF-02 (fail-open to L1/loader), RNF-03 (short L2 timeouts
 independent of the request deadline), RNF-04 (`Guard` circuit breaker, with
-`bastion` in the examples). Validated by sapper scenarios 3 and 4.
+`bastion` in the examples). Validated by sapper scenarios 3 and 4. A cache
+with a Redis Bus can be built while Redis is down; it starts receiving events
+when Redis returns (ADR-0006, #117), and closing it does not wait on the
+client's dial timeout (#137).
 
 **Residual:** while Redis is down, the source of truth carries the full load.
 
@@ -218,7 +232,10 @@ stale data until expiry.
 
 **Mitigation:** for tag invalidation the race is closed — entries record the
 tag generations read before the load, so a bump during the load makes the
-entry stale on arrival (RF-10, ADR-0005, ADR-0011). For an untagged `Delete`:
+entry stale on arrival (RF-10, ADR-0005, ADR-0011); a read issued after
+`InvalidateTag` returns never joins a load that began before it (#112); and a
+read in flight cannot restore the generations an invalidation retired from the
+local copy (#113). For an untagged `Delete`:
 short TTLs on write-exposed entries and coalescing (RF-05).
 
 **Residual:** an untagged key written concurrently with a `Delete` may be
@@ -271,9 +288,10 @@ enforced controls:
   the library does.
 - Redis is reachable only from the host application's network segment, with
   AUTH/ACL and TLS configured per RS-09.
-- `maxmemory-policy` is set to `allkeys-lru` on the Redis instance/database
-  used for caching, and that instance/database is not shared with `moat`'s
-  rate limiter or `cairn`'s link store (RS-10).
+- `maxmemory-policy` is set to `allkeys-lru` on the Redis instance used for
+  caching, and that instance is not shared with `moat`'s rate limiter or
+  `cairn`'s link store — not even in another logical database, since the
+  policy is instance-wide (RS-10).
 
 ## 6. Non-goals that are also security decisions
 

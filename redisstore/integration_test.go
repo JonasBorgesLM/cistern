@@ -155,8 +155,10 @@ func TestPausedRedisIsBoundedByTheTimeout(t *testing.T) {
 }
 
 // RS-09: the ACL documented in the README is enough for a default go-redis
-// client, and no more than it: keys outside cistern's prefix and
+// client, and no more than it: keys and channels outside cistern's prefix and
 // administrative commands are refused.
+// Negative control: verified failing with ~* for the keys, &* for the
+// channels, and +@all for the commands, one at a time.
 func TestMinimalACLIsSufficient(t *testing.T) {
 	r := startRedis(t)
 	ctx := context.Background()
@@ -215,6 +217,20 @@ func TestMinimalACLIsSufficient(t *testing.T) {
 	defer limited.Close()
 	if err := limited.FlushAll(ctx).Err(); err == nil || !strings.Contains(err.Error(), "NOPERM") {
 		t.Fatalf("FLUSHALL as the ACL user: err = %v, want NOPERM", err)
+	}
+	// Channels too: the user may not listen to or forge another system's
+	// Pub/Sub traffic (#120). t.Error, not t.Fatal: PUBLISH and SUBSCRIBE
+	// share the same &cistern:* grant, so a widened ACL fails both, and one
+	// must not stop the test before the other runs — a t.Fatal here left
+	// the SUBSCRIBE check unable to ever fail on its own (found by the
+	// re-audit, #120 follow-up).
+	if err := limited.Publish(ctx, "moat:events", "x").Err(); err == nil || !strings.Contains(err.Error(), "NOPERM") {
+		t.Errorf("PUBLISH outside cistern's channels: err = %v, want NOPERM", err)
+	}
+	ps := limited.Subscribe(ctx, "moat:events")
+	defer ps.Close()
+	if _, err := ps.Receive(ctx); err == nil || !strings.Contains(err.Error(), "NOPERM") {
+		t.Errorf("SUBSCRIBE outside cistern's channels: err = %v, want NOPERM", err)
 	}
 }
 

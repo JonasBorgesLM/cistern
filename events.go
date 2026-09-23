@@ -2,6 +2,8 @@ package cistern
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -32,6 +34,26 @@ func (c *Cache[K, V]) publish(ctx context.Context, kind bus.Kind, name string) e
 	return nil
 }
 
+// eventKey returns the consumer key a key event names, and whether the name is
+// a physical key this cache could have stored (ADR-0008). The name is
+// untrusted (RS-07), so its key is validated like a consumer key before it
+// reaches L1 or a hook, where a control character would inject into a log
+// line (RS-03, #119). A hashed key has no consumer key to report: "".
+func (c *Cache[K, V]) eventKey(name string) (key string, ok bool) {
+	rest, ok := strings.CutPrefix(name, c.prefix)
+	if !ok {
+		return "", false
+	}
+	if key, ok := strings.CutPrefix(rest, "k:"); ok {
+		return key, len(key) <= MaxKeyBytes && validateKey(key) == nil
+	}
+	if sum, ok := strings.CutPrefix(rest, "h:"); ok {
+		_, err := hex.DecodeString(sum)
+		return "", len(sum) == 2*sha256.Size && err == nil
+	}
+	return "", false
+}
+
 // onEvent applies another instance's invalidation to this one's local state
 // (RF-12). Events are untrusted (RS-07): one for another namespace, naming a
 // key outside this cache, or carrying an invalid tag is ignored. Receiving an
@@ -44,10 +66,13 @@ func (c *Cache[K, V]) onEvent(e bus.Event) {
 	defer cancel()
 	switch e.Kind {
 	case bus.KindKey:
-		if c.l1 == nil || !strings.HasPrefix(e.Name, c.prefix) {
+		if c.l1 == nil {
 			return
 		}
-		key := strings.TrimPrefix(strings.TrimPrefix(e.Name, c.prefix), "k:")
+		key, ok := c.eventKey(e.Name)
+		if !ok {
+			return
+		}
 		if err := c.l1.Delete(ctx, e.Name); err != nil {
 			c.onError(ctx, key, OpEvent, LevelL1, err) // best-effort: the L1 TTL still bounds staleness
 			return

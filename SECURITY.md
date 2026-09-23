@@ -52,7 +52,8 @@ operator must know:
   development.
 - **`maxmemory-policy allkeys-lru`** (RS-10). This is correct *for a cache* and
   is the deliberate opposite of what `moat`'s rate limiter and `cairn`'s link
-  store require (`noeviction`). Do not share an instance or logical database
-  between cistern and either of them.
+  store require (`noeviction`). Do not share an instance between cistern and
+  either of them. A separate logical database is not enough: `maxmemory` and
+  its policy are instance-wide, so `allkeys-lru` evicts their keys too.
 - **Standalone or Sentinel only** — Redis Cluster is out of scope for the MVP
   (`REQUIREMENTS.md` §3).

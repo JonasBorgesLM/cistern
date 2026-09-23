@@ -64,3 +64,34 @@ A small generic group in `internal/singleflight`, keyed by the **physical key**
 
 ## Open
 None.
+
+## Amendment (audit finding #112)
+The decision says flights are keyed by the physical key "so namespace and tag
+generations are part of what is coalesced". That stopped being true when
+ADR-0005 moved generations out of the key and into the envelope, and the
+audit showed the consequence: a caller joining a flight was served its value
+without its own generations being compared — another owner's data when the
+owner was only in the tag, and a pre-invalidation value to a read issued after
+`InvalidateTag` returned.
+
+For a tagged cache, a flight is now keyed by the physical key **and the tag
+generations the caller read**. Callers that saw different generations never
+share a load; a caller whose generations could not be read shares only with
+others in the same position, and its load is not cached.
+
+## Amendment (audit finding #134)
+The #112 amendment let callers whose generations could not be read share a
+load with "others in the same position". The re-audit showed that position
+was a single fixed flight key, so while the generation read was failing,
+another owner's caller joined the first owner's load and was returned its
+value — the #112 defect again, behind an L2 error.
+
+Such callers are now keyed by the physical key and **their tags**: they
+share a load only with callers of the same tags, never with another owner's
+and never with a caller that read its generations. Their loads are still not
+cached.
+
+A key unique to each caller was considered and rejected: it is equally safe,
+but it turns coalescing off for tagged keys for as long as the generation read
+fails — an L2 outage, when the source of truth carries the whole load (T-10,
+T-12).

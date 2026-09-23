@@ -7,6 +7,8 @@ import (
 	"math"
 	"math/rand/v2"
 	"regexp"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -252,7 +254,7 @@ func (c *Cache[K, V]) GetOrLoad(ctx context.Context, k K, load Loader[V], opts .
 	cacheable := c.tagsFn == nil || gens != nil
 
 	var led atomic.Bool
-	payload, err := c.flights.Do(ctx, s.pk, c.loadTimeout, func(loadCtx context.Context) ([]byte, error) {
+	payload, err := c.flights.Do(ctx, flightKey(s.pk, c.tagsFn != nil, s.genKeys, gens), c.loadTimeout, func(loadCtx context.Context) ([]byte, error) {
 		led.Store(true)
 		start := time.Now()
 		v, err := load(loadCtx)
@@ -458,6 +460,36 @@ func entryOptions(ttl time.Duration, opts []EntryOption) (entryConfig, error) {
 		return e, fmt.Errorf("%w: entry TTL must be positive, got %v", ErrInvalidConfig, e.ttl)
 	}
 	return e, nil
+}
+
+// flightKey is what concurrent loads are coalesced by. For a tagged cache it
+// includes the tag generations the caller read: a caller that saw different
+// generations — another owner's tag, or a tag invalidated since — must not be
+// served a load that recorded others (#112, ADR-0007 as amended).
+//
+// When the generations could not be read, the tags themselves stand in for
+// them, so such callers share a load only with callers of the same tags —
+// never another owner's (#134) — and never with a caller that read its
+// generations. They still share among themselves: an L2 outage is when the
+// source most needs coalescing.
+func flightKey(pk string, tagged bool, genKeys []string, gens []uint64) string {
+	if !tagged {
+		return pk
+	}
+	if gens == nil {
+		// Tag names cannot contain NUL (validateKey), so the join is unambiguous.
+		return pk + "\x00?\x00" + strings.Join(genKeys, "\x00")
+	}
+	var b strings.Builder
+	b.WriteString(pk)
+	b.WriteByte(0)
+	for i, g := range gens {
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(strconv.FormatUint(g, 10))
+	}
+	return b.String()
 }
 
 // scaled returns d*f, at least one nanosecond so a store never sees a

@@ -1,8 +1,7 @@
 # Releasing
 
 > **Nothing has been released yet.** [`release.yml`](.github/workflows/release.yml)
-> implements the checks below; it cannot publish anything until
-> `.github/allowed_signers` holds a key (see *Before the first tag*).
+> implements the checks below.
 
 Modules are versioned and tagged independently (ADR-0001, RNF-10). The tag
 prefix selects the module.
@@ -55,6 +54,20 @@ has no workspace. Tagging `redisstore` first publishes a release nobody can
   # {"enabled":true}
   ```
 
+- **A tag ruleset restricts who can create release tags** (#136). The release
+  workflow's signature check runs from the tagged commit and does not stop
+  someone with tag-push rights (see *What the release workflow checks*); this
+  ruleset does. It must cover creation, update and deletion of `refs/tags/v*`
+  and `refs/tags/redisstore/v*`, with no bypass except the owner:
+
+  ```bash
+  for id in $(gh api repos/JonasBorgesLM/cistern/rulesets --jq '.[] | select(.target=="tag") | .id'); do
+    gh api "repos/JonasBorgesLM/cistern/rulesets/$id" \
+      --jq '{name, enforcement, include: .conditions.ref_name.include, rules: [.rules[].type]}'
+  done
+  # enforcement "active"; include both patterns; rules creation, update, deletion
+  ```
+
 - **The physical key schema (`v1`, ADR-0008) and the envelope version freeze
   with `redisstore`.** Changing either later loses no data — this is a cache —
   but every replica starts cold and mixed-version replicas stop sharing entries
@@ -78,14 +91,27 @@ workspace — the resolution a consumer gets:
   a recorded exclusion (`examples` is never published);
 - `go mod verify`, build, vet and `-race` tests **at the module's own floor**,
   with `GOTOOLCHAIN=local`, so the notes' claim about the floor is true;
-- for `redisstore`: the integration suite against a real Redis, and a core
+- for `redisstore`: the integration suite against a real Redis, a core
   requirement that is a **released version, not a pseudo-version**
-  ([`released-version.sh`](.github/scripts/released-version.sh));
+  ([`released-version.sh`](.github/scripts/released-version.sh)), and **no
+  `replace` directive** ([`no-replace.sh`](.github/scripts/no-replace.sh)) —
+  a replace would let every check above pass against the local core while the
+  version it names does not exist (#116);
 - for the core: still no dependency at all (ADR-0001);
 - the documentation checks, and `govulncheck` on the newest toolchain;
 - the API diff against this module's previous tag, read from local history;
-- the tag's SSH signature, against `.github/allowed_signers` — an empty file
-  fails closed.
+- the tagged commit is on `main`, and the tag's SSH signature verifies against
+  `.github/allowed_signers` **as it is on `main`**, not as it is in the tagged
+  tree — otherwise a tag on an unreviewed commit that adds its own key would
+  vouch for itself (#115). A file with no key fails closed.
+
+What these checks do not cover: a tag push runs the `release.yml` of the
+tagged commit, so a tag whose commit also rewrites the workflow skips them;
+and the module proxy serves any pushed tag, whether or not the GitHub Release
+was created. They catch a mistake and an unreviewed signer; they do not stop
+someone with tag-push rights. That is a repository tag ruleset restricting
+who can create `v*` and `redisstore/v*` tags — a checklist item in *Before the
+first tag of a module*.
 
 ## Release notes
 
