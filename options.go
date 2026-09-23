@@ -3,6 +3,7 @@ package cistern
 import (
 	"time"
 
+	"github.com/JonasBorgesLM/cistern/bus"
 	"github.com/JonasBorgesLM/cistern/codec"
 )
 
@@ -26,6 +27,8 @@ type config struct {
 	hashKeys       bool
 	tagsFn         any // func(K) []string, checked against K in New
 	tagsSet        bool
+	bus            bus.Bus
+	busSet         bool
 }
 
 // Defaults used when the corresponding option is not given.
@@ -115,6 +118,17 @@ func WithKeyHashing() Option {
 // implement TagStore; New checks it.
 func WithTags[K comparable](tags func(K) []string) Option {
 	return func(c *config) { c.tagsFn, c.tagsSet = tags, true }
+}
+
+// WithBus connects the cache to other instances through b (RF-11, ADR-0006):
+// Delete and InvalidateTag publish an event, and events from other instances
+// evict the local L1 copy of a key, or retire a tag locally, at once instead
+// of after the L1 TTL. The cache subscribes in New; call Close to stop.
+//
+// The Bus is best-effort; a lost event costs at most one L1 TTL of staleness
+// (RNF-11). A publish failure is returned by the invalidation that caused it.
+func WithBus(b bus.Bus) Option {
+	return func(c *config) { c.bus, c.busSet = b, true }
 }
 
 // EntryOption configures a single call.
