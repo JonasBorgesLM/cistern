@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -25,15 +26,18 @@ func mustEncode(t testing.TB, e envelope.Entry) []byte {
 
 func TestRoundTrip(t *testing.T) {
 	for name, in := range map[string]envelope.Entry{
-		"value":   {Codec: "json", Expires: expires, Payload: []byte(`{"id":7}`)},
-		"absence": {Codec: "json", Expires: expires, Absent: true},
+		"value":             {Codec: "json", Expires: expires, Payload: []byte(`{"id":7}`)},
+		"absence":           {Codec: "json", Expires: expires, Absent: true},
+		"value with tags":   {Codec: "json", Expires: expires, Gens: []uint64{7, 1 << 61}, Payload: []byte(`{"id":7}`)},
+		"absence with tags": {Codec: "json", Expires: expires, Gens: []uint64{3}, Absent: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			out, err := envelope.Decode(mustEncode(t, in), limit)
 			if err != nil {
 				t.Fatalf("Decode: %v", err)
 			}
-			if out.Absent != in.Absent || out.Codec != in.Codec || !out.Expires.Equal(in.Expires) || !bytes.Equal(out.Payload, in.Payload) {
+			if out.Absent != in.Absent || out.Codec != in.Codec || !out.Expires.Equal(in.Expires) ||
+				!bytes.Equal(out.Payload, in.Payload) || !slices.Equal(out.Gens, in.Gens) {
 				t.Fatalf("round trip changed the entry: got %+v, want %+v", out, in)
 			}
 		})
@@ -43,11 +47,15 @@ func TestRoundTrip(t *testing.T) {
 // The layout is a storage format other versions will read: pin it byte for
 // byte, not only through a round trip that would agree with any layout.
 func TestLayoutIsTheOneADR0009Records(t *testing.T) {
-	got := mustEncode(t, envelope.Entry{Codec: "json", Expires: expires, Payload: []byte("{}")})
-	want := []byte{1, 0}
+	got := mustEncode(t, envelope.Entry{Codec: "json", Expires: expires, Gens: []uint64{9, 10}, Payload: []byte("{}")})
+	want := []byte{2, 0}
 	want = binary.BigEndian.AppendUint64(want, uint64(expires.UnixNano()))
 	want = append(want, 4)
-	want = append(want, "json{}"...)
+	want = append(want, "json"...)
+	want = append(want, 2)
+	want = binary.BigEndian.AppendUint64(want, 9)
+	want = binary.BigEndian.AppendUint64(want, 10)
+	want = append(want, "{}"...)
 	if !bytes.Equal(got, want) {
 		t.Fatalf("Encode = % x\nwant     % x", got, want)
 	}
@@ -65,6 +73,7 @@ func TestEncodeRejectsInvalidEntries(t *testing.T) {
 		"expiry before epoch":    {Codec: "json", Expires: time.Unix(-1, 0), Payload: []byte("{}")},
 		"value without payload":  {Codec: "json", Expires: expires},
 		"absence with a payload": {Codec: "json", Expires: expires, Absent: true, Payload: []byte("{}")},
+		"more than 8 tags":       {Codec: "json", Expires: expires, Gens: make([]uint64, 9), Payload: []byte("{}")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := envelope.Encode(e); err == nil {
@@ -84,7 +93,11 @@ func TestDecodeRejectsMalformedData(t *testing.T) {
 		"empty":                  {},
 		"shorter than header":    good[:10],
 		"codec id cut short":     good[:12],
-		"unknown version":        mutate(func(b []byte) []byte { b[0] = 2; return b }),
+		"no tag count":           good[:15],
+		"tag count above 8":      mutate(func(b []byte) []byte { b[15] = 9; return b }),
+		"generations cut short":  mutate(func(b []byte) []byte { b[15] = 1; return b[:20] }),
+		"unknown version":        mutate(func(b []byte) []byte { b[0] = 3; return b }),
+		"version 1 (pre-tags)":   mutate(func(b []byte) []byte { b[0] = 1; return b }),
 		"version zero":           mutate(func(b []byte) []byte { b[0] = 0; return b }),
 		"unknown flag":           mutate(func(b []byte) []byte { b[1] = 0b10; return b }),
 		"zero expiry":            mutate(func(b []byte) []byte { clear(b[2:10]); return b }),
@@ -92,6 +105,10 @@ func TestDecodeRejectsMalformedData(t *testing.T) {
 		"zero codec length":      mutate(func(b []byte) []byte { b[10] = 0; return b }),
 		"codec length too large": mutate(func(b []byte) []byte { b[10] = 33; return b }),
 		"value without payload":  mutate(func(b []byte) []byte { return b[:len(b)-2] }),
+		"value with a tag and no payload": mutate(func(b []byte) []byte {
+			b[15] = 1
+			return append(b[:16], 0, 0, 0, 0, 0, 0, 0, 7)
+		}),
 		"absence with payload":   mutate(func(b []byte) []byte { b[1] = 1; return b }),
 		"payload over the limit": append(mutate(func(b []byte) []byte { return b[:len(b)-2] }), make([]byte, limit+1)...),
 	} {
@@ -115,6 +132,7 @@ func TestPayloadAtTheLimitIsAccepted(t *testing.T) {
 func FuzzDecode(f *testing.F) {
 	f.Add(mustEncode(f, envelope.Entry{Codec: "json", Expires: expires, Payload: []byte(`{"id":7}`)}))
 	f.Add(mustEncode(f, envelope.Entry{Codec: "json", Expires: expires, Absent: true}))
+	f.Add(mustEncode(f, envelope.Entry{Codec: "json", Expires: expires, Gens: []uint64{1, 2, 3}, Payload: []byte(`"v"`)}))
 	f.Add([]byte{})
 	f.Add([]byte("v{\"legacy\":true}"))
 	f.Fuzz(func(t *testing.T, data []byte) {
