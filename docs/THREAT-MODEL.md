@@ -219,7 +219,8 @@ request.
 independent of the request deadline), RNF-04 (`Guard` circuit breaker, with
 `bastion` in the examples). Validated by sapper scenarios 3 and 4. A cache
 with a Redis Bus can be built while Redis is down; it starts receiving events
-when Redis returns (ADR-0006, #117).
+when Redis returns (ADR-0006, #117), and closing it does not wait on the
+client's dial timeout (#137).
 
 **Residual:** while Redis is down, the source of truth carries the full load.
 
