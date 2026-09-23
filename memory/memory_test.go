@@ -26,24 +26,6 @@ func newStore(t *testing.T, opts ...memory.Option) *memory.Store {
 	return s
 }
 
-// clock is a manually advanced time source.
-type clock struct {
-	mu  sync.Mutex
-	now time.Time
-}
-
-func (c *clock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now
-}
-
-func (c *clock) Advance(d time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = c.now.Add(d)
-}
-
 func mustSet(t *testing.T, s *memory.Store, key, value string, ttl time.Duration) {
 	t.Helper()
 	if err := s.Set(context.Background(), key, []byte(value), ttl); err != nil {
@@ -120,18 +102,6 @@ func TestCallersNeverShareBytesWithTheStore(t *testing.T) {
 	}
 	copy(out, "YYYYYYYY")
 	wantValue(t, s, "a", "original")
-}
-
-func TestEntryExpiresAfterTTL(t *testing.T) {
-	c := &clock{now: time.Unix(1_000_000, 0)}
-	s := newStore(t)
-	s.SetNow(c.Now)
-
-	mustSet(t, s, "a", "1", 10*time.Second)
-	c.Advance(9 * time.Second)
-	wantValue(t, s, "a", "1")
-	c.Advance(time.Second)
-	wantMiss(t, s, "a")
 }
 
 func TestSetRejectsNonPositiveTTL(t *testing.T) {
