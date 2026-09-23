@@ -161,7 +161,8 @@ Coalescing (singleflight) is a self-contained implementation under
 ### 8.3 Read flow (`GetOrLoad`)
 
 1. Validate the key and build the physical key: `namespace` + tag generations
-   + the consumer's key.
+   + the consumer's key. *(Resolved differently by ADR-0005: generations are
+   recorded in the envelope and checked on read, not encoded in the key.)*
 2. L1 hit → return.
 3. L2 hit (through `Guard` + timeout) → populate L1 → return.
 4. L2 error/timeout → error hook, treated as a miss (fail-open).
@@ -186,7 +187,9 @@ MVP mitigation: a short TTL on entries subject to writes, plus documentation.
 ### 8.5 Generation keys
 
 - Each tag's generation is stored in L2; reads fetch the generations via
-  `MGET` alongside the value (pipelined) to avoid extra round trips.
+  `MGET` alongside the value (pipelined) to avoid extra round trips. *(ADR-0005
+  settles the tension with §8.3 in favour of this: generations are checked
+  against the envelope.)*
 - In L1, the generation is cached with a short TTL and updated by Bus events.
 - Old generation keys expire naturally through TTL — nothing is scanned.
 - Consequence: incompatible with Redis Cluster without hash tags (the reason
