@@ -142,10 +142,14 @@ cache; see §7.
 
 **Actor:** Redis-adjacent attacker. **Impact:** bounded — extra L1 misses.
 
-**Mitigation:** RS-07 (the Bus carries invalidation only, never values).
+**Mitigation:** RS-07 (the Bus carries invalidation only, never values). The
+state an event can create is bounded: however many distinct tags a flood
+names, the local copy of generations stays under its limit (#135, found by the
+re-audit).
 
-**Residual:** a flood of forged invalidations degrades hit rate to zero, which
-is a performance loss, not a correctness or confidentiality loss.
+**Residual:** a flood of forged invalidations degrades hit rate to zero, and
+each time it fills the local copy of generations clears it, costing round
+trips — a performance loss, not a correctness or confidentiality loss.
 
 ### T-07 — Keys leaking into logs and metrics
 

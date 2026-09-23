@@ -87,9 +87,7 @@ func (g *genCache) put(genKeys []string, gens []uint64, since genEpoch) {
 		}
 	}
 	if len(g.m)+len(genKeys) > maxCachedGens || len(g.drops) > maxCachedGens {
-		clear(g.m)
-		clear(g.drops)
-		g.clears++
+		g.clear()
 	}
 	expires := g.now().Add(g.ttl)
 	for i, k := range genKeys {
@@ -97,9 +95,25 @@ func (g *genCache) put(genKeys []string, gens []uint64, since genEpoch) {
 	}
 }
 
+// drop forgets genKey's generation, after a local or Bus invalidation. Bus
+// events are untrusted and may name any number of tags, so the drop counters
+// are bounded here as well as in put: a replica that never reads a tag would
+// otherwise grow them without limit (#135).
 func (g *genCache) drop(genKey string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	delete(g.m, genKey)
+	if _, seen := g.drops[genKey]; !seen && len(g.drops) >= maxCachedGens {
+		g.clear()
+	}
 	g.drops[genKey]++
+}
+
+// clear empties the copy. Counting the clear is what keeps it safe: it resets
+// the drop counters, so every epoch taken before it must be refused (#113).
+// Callers hold mu.
+func (g *genCache) clear() {
+	clear(g.m)
+	clear(g.drops)
+	g.clears++
 }
