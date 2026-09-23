@@ -12,6 +12,7 @@ func TestSentinelErrorsAreDistinctAndSurviveWrapping(t *testing.T) {
 	sentinels := map[string]error{
 		"ErrNotFound":      cistern.ErrNotFound,
 		"ErrInvalidConfig": cistern.ErrInvalidConfig,
+		"ErrValueTooLarge": cistern.ErrValueTooLarge,
 	}
 	for name, err := range sentinels {
 		t.Run(name, func(t *testing.T) {
