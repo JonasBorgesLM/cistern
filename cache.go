@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/JonasBorgesLM/cistern/codec"
+	"github.com/JonasBorgesLM/cistern/internal/envelope"
 	"github.com/JonasBorgesLM/cistern/internal/singleflight"
 )
 
@@ -17,13 +18,6 @@ import (
 // the key separator, so every key component before the consumer key is
 // unambiguous.
 var namespacePattern = regexp.MustCompile(`^[a-z0-9._-]{1,64}$`)
-
-// Every stored entry starts with one byte saying what it holds, so a
-// remembered absence can never be mistaken for an encoded value.
-const (
-	tagValue  byte = 'v'
-	tagAbsent byte = 'n'
-)
 
 // Loader fetches a value from the source of truth. It returns ErrNotFound,
 // possibly wrapped, when the value does not exist.
@@ -48,7 +42,10 @@ type Cache[K comparable, V any] struct {
 	negTTL      time.Duration // zero: negative caching off
 	jitter      float64
 	loadTimeout time.Duration
+	maxValue    int
 	codec       codec.Codec
+	codecID     string
+	now         func() time.Time
 	rand        func() float64
 	flights     singleflight.Group[[]byte]
 }
@@ -64,7 +61,7 @@ type Cache[K comparable, V any] struct {
 // At least one of WithL1 and WithL2, and WithTTL, are required. New returns an
 // error wrapping ErrInvalidConfig for any invalid configuration.
 func New[K comparable, V any](namespace string, key func(K) string, opts ...Option) (*Cache[K, V], error) {
-	cfg := config{codec: codec.JSON, loadTimeout: DefaultLoadTimeout}
+	cfg := config{codec: codec.JSON, loadTimeout: DefaultLoadTimeout, maxValue: DefaultMaxValueBytes}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
@@ -85,7 +82,10 @@ func New[K comparable, V any](namespace string, key func(K) string, opts ...Opti
 		negTTL:      cfg.negTTL,
 		jitter:      cfg.jitter,
 		loadTimeout: cfg.loadTimeout,
+		maxValue:    cfg.maxValue,
 		codec:       cfg.codec,
+		codecID:     cfg.codec.ID(),
+		now:         time.Now,
 		rand:        rand.Float64, // #nosec G404 -- jitter spreads expiry; a predictable draw is harmless
 	}, nil
 }
@@ -116,8 +116,12 @@ func validate(namespace string, hasKey bool, cfg *config) error {
 		return fmt.Errorf("load timeout must be positive, got %v", cfg.loadTimeout)
 	case math.IsNaN(cfg.jitter) || cfg.jitter < 0 || cfg.jitter >= 1:
 		return fmt.Errorf("jitter must be in [0, 1), got %v", cfg.jitter)
+	case cfg.maxValue <= 0:
+		return fmt.Errorf("max value bytes must be positive, got %d", cfg.maxValue)
 	case cfg.codec == nil:
 		return errors.New("codec is nil")
+	case len(cfg.codec.ID()) < 1 || len(cfg.codec.ID()) > 32:
+		return fmt.Errorf("codec id %q must be 1 to 32 bytes (ADR-0009)", cfg.codec.ID())
 	}
 	return nil
 }
@@ -163,25 +167,27 @@ func (c *Cache[K, V]) GetOrLoad(ctx context.Context, k K, load Loader[V], opts .
 		return v, readErr
 	}
 
-	data, err := c.flights.Do(ctx, pk, c.loadTimeout, func(loadCtx context.Context) ([]byte, error) {
+	payload, err := c.flights.Do(ctx, pk, c.loadTimeout, func(loadCtx context.Context) ([]byte, error) {
 		v, err := load(loadCtx)
 		if err != nil {
 			if c.negTTL > 0 && errors.Is(err, ErrNotFound) {
-				c.populate(loadCtx, pk, []byte{tagAbsent}, c.negTTL)
+				c.populate(loadCtx, pk, envelope.Entry{Absent: true}, c.negTTL)
 			}
 			return nil, err
 		}
-		data, err := c.encode(v)
+		payload, err := c.codec.Marshal(v)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("cistern: encoding value: %w", err)
 		}
-		c.populate(loadCtx, pk, data, e.ttl)
-		return data, nil
+		if len(payload) <= c.maxValue {
+			c.populate(loadCtx, pk, envelope.Entry{Payload: payload}, e.ttl)
+		}
+		return payload, nil
 	})
 	if err != nil {
 		return zero, err
 	}
-	return c.decode(data)
+	return c.decode(payload)
 }
 
 // Set stores v under k in every configured level, L2 first. Unlike a read, it
@@ -199,11 +205,14 @@ func (c *Cache[K, V]) Set(ctx context.Context, k K, v V, opts ...EntryOption) er
 	if err != nil {
 		return err
 	}
-	data, err := c.encode(v)
+	payload, err := c.codec.Marshal(v)
 	if err != nil {
-		return err
+		return fmt.Errorf("cistern: encoding value: %w", err)
 	}
-	return c.write(ctx, c.prefix+c.key(k), data, e.ttl)
+	if len(payload) > c.maxValue {
+		return fmt.Errorf("%w: %d bytes encoded, limit %d", ErrValueTooLarge, len(payload), c.maxValue)
+	}
+	return c.write(ctx, c.prefix+c.key(k), envelope.Entry{Payload: payload}, e.ttl)
 }
 
 // Delete removes k from every configured level. L1 is always evicted, and an
@@ -225,7 +234,8 @@ func (c *Cache[K, V]) Delete(ctx context.Context, k K) error {
 }
 
 // read looks pk up in L1, then L2. A level that errors, or holds an entry that
-// does not decode, is skipped (ADR-0002).
+// is malformed, from another codec, past its logical expiry or not decodable,
+// is skipped (ADR-0002, ADR-0009).
 func (c *Cache[K, V]) read(ctx context.Context, pk string) (value V, ok bool, err error) {
 	for _, s := range []Store{c.l1, c.l2} {
 		if s == nil {
@@ -235,28 +245,38 @@ func (c *Cache[K, V]) read(ctx context.Context, pk string) (value V, ok bool, er
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return value, false, ctxErr
 		}
-		if err != nil || !hit || len(data) == 0 {
+		if err != nil || !hit {
 			continue
 		}
-		switch data[0] {
-		case tagAbsent:
+		e, err := envelope.Decode(data, c.maxValue)
+		if err != nil || e.Codec != c.codecID || !c.now().Before(e.Expires) {
+			continue
+		}
+		if e.Absent {
 			return value, false, ErrNotFound
-		case tagValue:
-			if v, err := c.decode(data); err == nil {
-				return v, true, nil
-			}
+		}
+		if v, err := c.decode(e.Payload); err == nil {
+			return v, true, nil
 		}
 	}
 	return value, false, nil
 }
 
 // write stores an entry in every configured level, L2 first, with one jitter
-// draw for both so L1 never outlives L2 (ADR-0004).
-func (c *Cache[K, V]) write(ctx context.Context, pk string, data []byte, ttl time.Duration) error {
+// draw for both so L1 never outlives L2 (ADR-0004). The envelope's logical
+// expiry is the longest physical TTL used (ADR-0009).
+func (c *Cache[K, V]) write(ctx context.Context, pk string, entry envelope.Entry, ttl time.Duration) error {
 	scale := 1 - c.jitter*c.rand()
+	longest := scaled(ttl, scale)
+	entry.Codec = c.codecID
+	entry.Expires = c.now().Add(longest)
+	data, err := envelope.Encode(entry)
+	if err != nil {
+		return fmt.Errorf("cistern: %w", err)
+	}
 	var errs []error
 	if c.l2 != nil {
-		errs = append(errs, c.l2.Set(ctx, pk, data, scaled(ttl, scale)))
+		errs = append(errs, c.l2.Set(ctx, pk, data, longest))
 	}
 	if c.l1 != nil {
 		errs = append(errs, c.l1.Set(ctx, pk, data, scaled(min(ttl, c.l1TTL), scale)))
@@ -266,25 +286,16 @@ func (c *Cache[K, V]) write(ctx context.Context, pk string, data []byte, ttl tim
 
 // populate stores an entry on behalf of a read. Its failure is not the
 // reader's to handle: reads fail open (ADR-0002).
-func (c *Cache[K, V]) populate(ctx context.Context, pk string, data []byte, ttl time.Duration) {
-	if err := c.write(ctx, pk, data, ttl); err != nil {
+func (c *Cache[K, V]) populate(ctx context.Context, pk string, entry envelope.Entry, ttl time.Duration) {
+	if err := c.write(ctx, pk, entry, ttl); err != nil {
 		return // reads fail open (ADR-0002)
 	}
 }
 
-// encode returns v as a value entry.
-func (c *Cache[K, V]) encode(v V) ([]byte, error) {
-	data, err := c.codec.Marshal(v)
-	if err != nil {
-		return nil, fmt.Errorf("cistern: encoding value: %w", err)
-	}
-	return append([]byte{tagValue}, data...), nil
-}
-
-// decode returns a fresh V from a value entry.
-func (c *Cache[K, V]) decode(entry []byte) (V, error) {
+// decode returns a fresh V from an encoded payload.
+func (c *Cache[K, V]) decode(payload []byte) (V, error) {
 	var v V
-	if err := c.codec.Unmarshal(entry[1:], &v); err != nil {
+	if err := c.codec.Unmarshal(payload, &v); err != nil {
 		return v, fmt.Errorf("cistern: decoding value: %w", err)
 	}
 	return v, nil

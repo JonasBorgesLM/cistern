@@ -16,4 +16,9 @@ var (
 	// TTL (RF-08). Constructors return it wrapped with the reason; they never
 	// panic (RF-16).
 	ErrInvalidConfig = errors.New("cistern: invalid configuration")
+
+	// ErrValueTooLarge reports a value whose encoding exceeds the cache's
+	// value limit (WithMaxValueBytes, RS-05). Set returns it; GetOrLoad
+	// returns the loaded value without caching it instead.
+	ErrValueTooLarge = errors.New("cistern: value too large")
 )
