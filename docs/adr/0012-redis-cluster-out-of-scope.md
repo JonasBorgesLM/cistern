@@ -29,6 +29,15 @@ dial and read timeouts — is go-redis's own option, not a subset re-exposed by
 this module (RS-09). The consumer owns the client's lifecycle; `redisstore`
 never closes it.
 
+**`New` refuses a client without `ContextTimeoutEnabled`.** go-redis v9 does
+not apply a context's deadline to the socket unless that option is set; it
+falls back to the client's read timeout. Measured against a server that
+accepts and never answers: a 50 ms deadline returned after 5 s without the
+option and after 50 ms with it. `redisstore`'s per-call timeout (RNF-03) is a
+context deadline, so without the option it would silently not exist, and a
+slow Redis would cost every read seconds instead of milliseconds. Refusing the
+client at construction turns that into an error the consumer sees once.
+
 ## Consequences
 - A deployment on Redis Cluster cannot use `redisstore` as shipped. A
   third-party `Store` over a cluster client is possible, but tag invalidation
