@@ -69,6 +69,9 @@ func New[K comparable, V any](namespace string, key func(K) string, opts ...Opti
 	if err := validate(namespace, key != nil, &cfg); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
 	}
+	if uncacheableType[V]() {
+		return nil, fmt.Errorf("%w: the value type %T implements NoCache", ErrUncacheable, *new(V))
+	}
 	l1TTL := cfg.ttl
 	if cfg.l1TTLSet {
 		l1TTL = cfg.l1TTL
@@ -184,6 +187,9 @@ func (c *Cache[K, V]) GetOrLoad(ctx context.Context, k K, load Loader[V], opts .
 			}
 			return nil, err
 		}
+		if uncacheable(v) {
+			return nil, fmt.Errorf("%w: the loader returned a %T", ErrUncacheable, v)
+		}
 		payload, err := c.codec.Marshal(v)
 		if err != nil {
 			return nil, fmt.Errorf("cistern: encoding value: %w", err)
@@ -217,6 +223,9 @@ func (c *Cache[K, V]) Set(ctx context.Context, k K, v V, opts ...EntryOption) er
 	pk, err := c.physicalKey(k)
 	if err != nil {
 		return err
+	}
+	if uncacheable(v) {
+		return fmt.Errorf("%w: %T", ErrUncacheable, v)
 	}
 	payload, err := c.codec.Marshal(v)
 	if err != nil {
