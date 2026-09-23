@@ -1,8 +1,7 @@
 # Releasing
 
 > **Nothing has been released yet.** [`release.yml`](.github/workflows/release.yml)
-> implements the checks below; it cannot publish anything until
-> `.github/allowed_signers` holds a key (see *Before the first tag*).
+> implements the checks below.
 
 Modules are versioned and tagged independently (ADR-0001, RNF-10). The tag
 prefix selects the module.
@@ -84,8 +83,17 @@ workspace — the resolution a consumer gets:
 - for the core: still no dependency at all (ADR-0001);
 - the documentation checks, and `govulncheck` on the newest toolchain;
 - the API diff against this module's previous tag, read from local history;
-- the tag's SSH signature, against `.github/allowed_signers` — an empty file
-  fails closed.
+- the tagged commit is on `main`, and the tag's SSH signature verifies against
+  `.github/allowed_signers` **as it is on `main`**, not as it is in the tagged
+  tree — otherwise a tag on an unreviewed commit that adds its own key would
+  vouch for itself (#115). A file with no key fails closed.
+
+What these checks do not cover: a tag push runs the `release.yml` of the
+tagged commit, so a tag whose commit also rewrites the workflow skips them;
+and the module proxy serves any pushed tag, whether or not the GitHub Release
+was created. They catch a mistake and an unreviewed signer; they do not stop
+someone with tag-push rights. That is a repository tag ruleset restricting
+who can create `v*` and `redisstore/v*` tags.
 
 ## Release notes
 

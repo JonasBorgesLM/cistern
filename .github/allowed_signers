@@ -1,11 +1,12 @@
 # SSH keys allowed to sign release tags, checked by the `release` job in
 # .github/workflows/release.yml (RNF-10).
 #
-# THIS FILE IS EMPTY, AND THAT BLOCKS EVERY RELEASE. That is deliberate: an
-# unsigned release is one nobody can attribute, and a check that warns instead
-# of failing gates nothing.
+# The copy on `main` is the one the release job reads; a key added anywhere
+# else signs nothing until it is reviewed into main (#115). With no key, every
+# release fails: an unsigned release is one nobody can attribute, and a check
+# that warns instead of failing gates nothing.
 #
-# To populate it, from the machine that will cut tags:
+# To add a key, from the machine that will cut tags:
 #
 #   ssh-add -L                      # or: cat ~/.ssh/id_ed25519.pub
 #
