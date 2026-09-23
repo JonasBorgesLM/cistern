@@ -34,11 +34,12 @@ A small generic group in `internal/singleflight`, keyed by the **physical key**
   values such as trace ids survive — bounded by a **load timeout** (option
   `WithLoadTimeout`, default 10 s). Each caller waits for the result or for its
   own context, whichever comes first; leaving does not cancel the load.
-- **The flight is forgotten when its load timeout expires**, even if the
-  loader ignores its context and never returns. The next caller starts a fresh
-  load instead of joining a dead one. A loader that ignores its context can
-  therefore leak one goroutine per timeout window; that is bounded, and it is
-  the loader's bug, not a stuck key.
+- **A flight whose load timeout has expired is never joined**, even if the
+  loader ignores its context and never returns: the next caller replaces it
+  and starts a fresh load. A loader that ignores its context can therefore
+  leak one goroutine per timeout window (and, if its key is never requested
+  again, one map entry); that is bounded, and it is the loader's bug, not a
+  stuck key.
 - **A panicking loader is recovered in the flight goroutine and re-panicked in
   every caller still waiting**, with the original value and stack. That is
   what each caller would have seen calling the loader itself, and it never
