@@ -41,6 +41,29 @@ read path and returns them from `Set` and `Delete`
 ([ADR-0002](../docs/adr/0002-fail-open-reads-fail-loud-invalidation.md)). With
 Redis down, reads are served by the loader, each costing at most the timeout.
 
+## Tags and the Bus
+
+`Store` is also a `cistern.TagStore`: with `cistern.WithTags`, a read fetches
+the value and its tags' generations in one pipelined round trip, and
+`InvalidateTag` bumps a counter — nothing is scanned
+([ADR-0005](../docs/adr/0005-tag-invalidation-with-generation-counters.md)).
+
+`NewBus` gives the `bus.Bus` that carries invalidations between replicas over
+Pub/Sub on the `cistern:v1:bus` channel
+([ADR-0006](../docs/adr/0006-best-effort-invalidation-bus.md)):
+
+```go
+b, err := redisstore.NewBus(client)
+c, err := cistern.New[K, V]("tasks", key,
+	cistern.WithL1(l1), cistern.WithL2(l2), cistern.WithBus(b),
+	cistern.WithTags(tags), cistern.WithTTL(time.Hour), cistern.WithL1TTL(10*time.Second))
+defer c.Close()
+```
+
+It is best-effort, like Pub/Sub itself: a replica that is reconnecting misses
+events and serves its L1 copy for at most the L1 TTL (RNF-11). Messages are
+decoded as untrusted input; anything malformed is dropped (RS-07).
+
 ## Operating Redis for it
 
 **A dedicated ACL user with the minimum it needs** (RS-09). This is the exact
@@ -48,11 +71,12 @@ user the integration suite creates and proves sufficient, and proves refused
 outside cistern's keys and for administrative commands:
 
 ```
-ACL SETUSER cistern on >s3cret-for-tests resetkeys ~cistern:* resetchannels -@all +get +set +del
+ACL SETUSER cistern on >s3cret-for-tests resetkeys ~cistern:* resetchannels &cistern:* -@all +get +set +del +mget +incr +pexpire +publish +subscribe
 ```
 
-Use your own password, not the one above. The Pub/Sub invalidation bus (C6)
-will add its commands and channel to this line.
+Use your own password, not the one above. Each permission is there because
+the suite fails without it: `mget`, `incr` and `pexpire` for tag generations,
+`publish`, `subscribe` and the `&cistern:*` channel for the Bus.
 
 **TLS** outside local development, through the client's `TLSConfig`. The
 integration suite does not exercise TLS; that is go-redis's code path, not
@@ -63,9 +87,11 @@ policy: losing a cached value costs a miss, never a wrong answer
 ([ADR-0010](../docs/adr/0010-lru-eviction-is-safe-for-cached-values.md)). It is
 the deliberate opposite of what `moat`'s rate limiter and `cairn`'s link store
 require (`noeviction`), so **never share an instance or logical database with
-them**: their keys would be evicted under cistern's memory pressure. One
-exception is recorded for later — tag generation counters must not be allowed
-to go backwards when evicted (ADR-0010, ADR-0005).
+them**: their keys would be evicted under cistern's memory pressure. Tag
+generation counters are evicted like anything else, and that is safe: a
+missing counter comes back at an unpredictable value, so the entries of its tag
+become misses and nothing retired is ever served again
+([ADR-0005](../docs/adr/0005-tag-invalidation-with-generation-counters.md)).
 
 ## Tests
 

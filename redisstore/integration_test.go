@@ -19,6 +19,7 @@ import (
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 
 	"github.com/JonasBorgesLM/cistern"
+	"github.com/JonasBorgesLM/cistern/bus"
 	"github.com/JonasBorgesLM/cistern/redisstore"
 )
 
@@ -177,6 +178,34 @@ func TestMinimalACLIsSufficient(t *testing.T) {
 	}
 	if err := s.Delete(ctx, "cistern:v1:t:-:k:a"); err != nil {
 		t.Fatalf("Delete as the ACL user: %v", err)
+	}
+	genKeys := []string{"cistern:v1:t:g:user:42:lists"}
+	if _, _, _, err := s.GetTagged(ctx, "cistern:v1:t:-:k:a", genKeys, time.Minute); err != nil {
+		t.Fatalf("GetTagged as the ACL user: %v", err)
+	}
+	if err := s.Bump(ctx, genKeys, time.Minute); err != nil {
+		t.Fatalf("Bump as the ACL user: %v", err)
+	}
+	aclBus := func() *redisstore.Bus {
+		return r.busFor(t, &redis.Options{Username: "cistern", Password: "s3cret-for-tests"})
+	}
+	got := make(chan bus.Event, 1)
+	unsubscribe, err := aclBus().Subscribe(func(e bus.Event) { got <- e })
+	if err != nil {
+		t.Fatalf("Subscribe as the ACL user: %v", err)
+	}
+	defer unsubscribe()
+	want := bus.Event{Namespace: "t", Kind: bus.KindTag, Name: "user:42:lists"}
+	if err := aclBus().Publish(ctx, want); err != nil {
+		t.Fatalf("Publish as the ACL user: %v", err)
+	}
+	select {
+	case e := <-got:
+		if e != want {
+			t.Fatalf("received %+v", e)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the ACL user's subscription received nothing")
 	}
 
 	if err := s.Set(ctx, "moat:ratelimit:1.2.3.4", []byte("x"), time.Minute); err == nil || !strings.Contains(err.Error(), "NOPERM") {
