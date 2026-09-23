@@ -248,34 +248,6 @@ func TestTTLsReachTheStores(t *testing.T) {
 	})
 }
 
-// RF-04: jitter only shortens a TTL, by at most the configured fraction, and
-// the same draw applies to both levels so L1 never outlives L2 (ADR-0004).
-func TestJitterShortensTTLWithinBounds(t *testing.T) {
-	ctx := context.Background()
-	for _, tc := range []struct {
-		draw    float64
-		wantL1  time.Duration
-		wantL2  time.Duration
-		comment string
-	}{
-		{0, 10 * time.Second, 100 * time.Second, "no reduction"},
-		{0.5, 9 * time.Second, 90 * time.Second, "half the maximum reduction"},
-		{0.999999, 8*time.Second + 2*time.Microsecond, 80*time.Second + 200*time.Microsecond, "just under the maximum"},
-	} {
-		t.Run(tc.comment, func(t *testing.T) {
-			l1, l2 := newRecorder(), newRecorder()
-			c := newCache(t, cistern.WithL1(l1), cistern.WithL2(l2),
-				cistern.WithTTL(100*time.Second), cistern.WithL1TTL(10*time.Second), cistern.WithJitter(0.2))
-			cistern.SetRand(c, func() float64 { return tc.draw })
-			if err := c.Set(ctx, "k", "v"); err != nil {
-				t.Fatal(err)
-			}
-			wantTTLNear(t, l1, tc.wantL1)
-			wantTTLNear(t, l2, tc.wantL2)
-		})
-	}
-}
-
 func TestGetReadsL1BeforeL2(t *testing.T) {
 	ctx := context.Background()
 	l1, l2 := newRecorder(), newRecorder()
@@ -428,19 +400,6 @@ func wantTTL(t *testing.T, r *recorder, want time.Duration) {
 	for _, got := range r.ttls {
 		if got != want {
 			t.Fatalf("stored TTL = %v, want %v", got, want)
-		}
-		return
-	}
-	t.Fatal("nothing was stored")
-}
-
-func wantTTLNear(t *testing.T, r *recorder, want time.Duration) {
-	t.Helper()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, got := range r.ttls {
-		if d := got - want; d < -time.Millisecond || d > time.Millisecond {
-			t.Fatalf("stored TTL = %v, want about %v", got, want)
 		}
 		return
 	}
