@@ -162,26 +162,41 @@ func TestGuardWrapsEveryCall(t *testing.T) {
 	}
 }
 
-type deadlineGuard struct{ hadDeadline atomic.Bool }
-
-func (g *deadlineGuard) Do(ctx context.Context, op func(context.Context) error) error {
-	_, ok := ctx.Deadline()
-	g.hadDeadline.Store(ok)
-	return errOpen
+// callerCtxGuard records, after each call, whether the context it was given
+// had ended, and what the call returned.
+type callerCtxGuard struct {
+	guardCtxDone atomic.Bool
+	opFailed     atomic.Bool
 }
 
-// The timeout applies inside the guard, so a breaker sees the same bounded
-// call the store makes.
-func TestGuardSeesTheBoundedContext(t *testing.T) {
+func (g *callerCtxGuard) Do(ctx context.Context, op func(context.Context) error) error {
+	err := op(ctx)
+	g.guardCtxDone.Store(ctx.Err() != nil)
+	g.opFailed.Store(err != nil)
+	return err
+}
+
+// RNF-03 with RNF-04: the per-call timeout is a failure of the dependency, not
+// a cancellation by the caller, so a Guard must see it as the operation's
+// error while its own context is still live. A breaker such as bastion treats
+// a call whose context has ended as neither success nor failure; given the
+// timeout on its context, it would never open on a slow Redis.
+// Negative control: verified failing with the timeout on the Guard's context.
+func TestTimeoutIsTheOperationsNotTheCallers(t *testing.T) {
 	addr, _ := blackhole(t)
-	g := &deadlineGuard{}
-	s, err := redisstore.New(client(t, addr, true), redisstore.WithGuard(g))
+	g := &callerCtxGuard{}
+	s, err := redisstore.New(client(t, addr, true), redisstore.WithTimeout(30*time.Millisecond), redisstore.WithGuard(g))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, _ = s.Get(context.Background(), "k")
-	if !g.hadDeadline.Load() {
-		t.Fatal("the guard received a context without the store's deadline")
+	if _, _, err := s.Get(context.Background(), "k"); err == nil {
+		t.Fatal("Get against a Redis that never answers returned no error")
+	}
+	if !g.opFailed.Load() {
+		t.Fatal("the operation the Guard ran did not fail")
+	}
+	if g.guardCtxDone.Load() {
+		t.Fatal("the Guard's own context had ended: a breaker would not count this timeout")
 	}
 }
 

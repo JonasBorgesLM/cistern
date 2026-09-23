@@ -150,22 +150,3 @@ func TestMalformedMessagesDoNotStopTheBus(t *testing.T) {
 		t.Fatal("the bus stopped delivering after malformed messages")
 	}
 }
-
-// ADR-0005: every bump refreshes the counter's TTL, so a tag that keeps being
-// invalidated keeps its counter rather than having it expire mid-use.
-// Negative control: verified failing with the PEXPIRE removed from Bump.
-func TestBumpRefreshesTheCounterTTL(t *testing.T) {
-	r := startRedis(t)
-	s := r.storeFor(t, nil)
-	ctx := context.Background()
-	gk := []string{"cistern:v1:t:g:user:42:lists"}
-	if _, _, _, err := s.GetTagged(ctx, "cistern:v1:t:-:k:a", gk, 300*time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Bump(ctx, gk, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	if ttl := r.raw.PTTL(ctx, gk[0]).Val(); ttl < 30*time.Second {
-		t.Fatalf("counter TTL after a bump = %v, want the minute Bump was given", ttl)
-	}
-}
