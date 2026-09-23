@@ -24,6 +24,8 @@ type config struct {
 	loadTimeoutSet bool
 	maxValue       int
 	hashKeys       bool
+	tagsFn         any // func(K) []string, checked against K in New
+	tagsSet        bool
 }
 
 // Defaults used when the corresponding option is not given.
@@ -101,6 +103,18 @@ func WithMaxValueBytes(n int) Option {
 // hashed, and every key is still checked for control characters and UTF-8.
 func WithKeyHashing() Option {
 	return func(c *config) { c.hashKeys = true }
+}
+
+// WithTags declares how a key's tags are derived, which enables InvalidateTag
+// (RF-10, ADR-0005): every entry records the generation of its tags, and a tag
+// invalidated since reads as a miss. Reads and writes derive tags from the
+// same function, so they can never disagree. At most 8 tags per key, each
+// valid like a key; order and duplicates do not matter.
+//
+// The cache's authoritative level — L2 if there is one, else L1 — must
+// implement TagStore; New checks it.
+func WithTags[K comparable](tags func(K) []string) Option {
+	return func(c *config) { c.tagsFn, c.tagsSet = tags, true }
 }
 
 // EntryOption configures a single call.
