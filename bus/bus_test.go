@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/JonasBorgesLM/cistern/bus"
+	"github.com/JonasBorgesLM/cistern/cisterntest"
 )
 
 var tagEvent = bus.Event{Namespace: "tasks", Kind: bus.KindTag, Name: "user:42:lists"}
@@ -131,3 +132,10 @@ func FuzzDecode(f *testing.F) {
 	})
 }
 
+// RF-11: Local passes the conformance suite every Bus must pass.
+func TestLocalConformance(t *testing.T) {
+	cisterntest.RunBus(t, func(t *testing.T) (bus.Bus, bus.Bus) {
+		b := bus.NewLocal()
+		return b, b
+	})
+}
