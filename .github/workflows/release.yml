@@ -109,11 +109,14 @@ jobs:
         run: go test -tags=integration -race -count=1 ./...
 
       # RELEASING.md, step 3: a satellite must require a released core. A
-      # pseudo-version is an unreleased commit nobody reviewed as a release.
+      # pseudo-version is an unreleased commit nobody reviewed as a release,
+      # and a replace would let the build above pass against ../ while the
+      # version it names does not exist (#116).
       - name: The satellite requires a released core
         if: needs.resolve.outputs.module == 'redisstore'
         working-directory: redisstore
         run: |
+          ../.github/scripts/no-replace.sh
           v=$(go list -m -f '{{.Version}}' github.com/JonasBorgesLM/cistern)
           ../.github/scripts/released-version.sh "$v"
 
