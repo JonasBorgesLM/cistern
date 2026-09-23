@@ -98,3 +98,10 @@ alphabet and would otherwise have to be escaped.
 Whether to offer hashing of **all** keys (not only long ones) so that user ids
 never reach Redis in clear. Not in the MVP: nobody has asked for it, and it
 would be one option on top of the existing hash path.
+
+## Amendment (ADR-0005)
+Tag generations are recorded in the envelope and checked on read, not encoded
+in the key. The `<generations>` component of an entry's key is therefore always
+`-`; it stays in the layout so the `v1` key schema does not change. Generation
+counters live under `cistern:v1:<namespace>:g:<tag>`, whose fourth component
+`g` can never be an entry's `-`. Tags are validated like consumer keys.

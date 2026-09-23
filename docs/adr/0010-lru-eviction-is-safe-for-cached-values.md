@@ -61,3 +61,8 @@ must not be accepted without answering it.
 
 ## Open
 None here; the open part belongs to ADR-0005.
+
+## Amendment (ADR-0005)
+The exception is answered: a missing generation counter is recreated at an
+unpredictable value in [1, 2⁶²), so an evicted counter makes the entries of its
+tag misses and can never make a retired entry current again.
