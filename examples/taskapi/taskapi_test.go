@@ -92,7 +92,9 @@ func TestListsAreCachedPerOwner(t *testing.T) {
 //
 // The owner is in both the key and the tag, and either one alone keeps users
 // apart: with the owner missing from the key only, the entry records its
-// owner's tag generation, which never matches another owner's (ADR-0005).
+// owner's tag generation, which never matches another owner's (ADR-0005). The
+// concurrent case — a call arriving during another owner's load — is covered in
+// the core by TestConcurrentCallsWithDifferentTagsDoNotShareALoad (#112).
 // Negative control: verified failing with the owner left out of both;
 // verified still passing with it left out of the key alone.
 func TestOneUserNeverSeesAnothersCachedList(t *testing.T) {

@@ -64,3 +64,17 @@ A small generic group in `internal/singleflight`, keyed by the **physical key**
 
 ## Open
 None.
+
+## Amendment (audit finding #112)
+The decision says flights are keyed by the physical key "so namespace and tag
+generations are part of what is coalesced". That stopped being true when
+ADR-0005 moved generations out of the key and into the envelope, and the
+audit showed the consequence: a caller joining a flight was served its value
+without its own generations being compared — another owner's data when the
+owner was only in the tag, and a pre-invalidation value to a read issued after
+`InvalidateTag` returned.
+
+For a tagged cache, a flight is now keyed by the physical key **and the tag
+generations the caller read**. Callers that saw different generations never
+share a load; a caller whose generations could not be read shares only with
+others in the same position, and its load is not cached.

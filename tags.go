@@ -115,6 +115,10 @@ func (c *Cache[K, V]) readTagged(ctx context.Context, s slot) (value V, ok bool,
 	if c.l2 != nil {
 		authLevel = LevelL2
 	}
+	var since genEpoch
+	if c.gens != nil {
+		since = c.gens.epoch(s.genKeys)
+	}
 	data, hit, current, getErr := c.auth.GetTagged(ctx, s.pk, s.genKeys, c.genTTL)
 	if ctx.Err() != nil {
 		return value, false, nil, ctx.Err()
@@ -126,7 +130,7 @@ func (c *Cache[K, V]) readTagged(ctx context.Context, s slot) (value V, ok bool,
 		return value, false, nil, nil // reads fail open (ADR-0002)
 	}
 	if c.gens != nil {
-		c.gens.put(s.genKeys, current)
+		c.gens.put(s.genKeys, current, since)
 	}
 	if haveLocal && slices.Equal(local.Gens, current) {
 		if v, found, err := c.served(ctx, s.key, LevelL1, local); err == nil || errors.Is(err, ErrNotFound) {
