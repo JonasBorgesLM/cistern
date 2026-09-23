@@ -3,6 +3,7 @@ package cistern_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,14 +82,17 @@ func TestBusIgnoresOtherNamespaces(t *testing.T) {
 	mustHit(t, tasks, "user:42:list:1", "v")
 }
 
-// RS-07: an event is untrusted input. One naming a key outside the cache, or
-// an invalid tag, is ignored — no panic, no effect.
+// RS-07: an event is untrusted input. One naming a key outside the cache, a
+// key this cache could not have stored, or an invalid tag, is ignored — no
+// panic, no effect, and nothing reaches the hooks.
 //
-// Negative control: verified failing with the key-prefix check removed.
+// Negative control: verified failing with the key-prefix check removed, with
+// the key-event validation removed, and with the tag validation removed.
 func TestBusIgnoresEventsItCannotTrust(t *testing.T) {
 	b := bus.NewLocal()
 	shared := newL1(t) // one L1 store under two namespaces
-	c := taggedCache(t, shared, cistern.WithBus(b))
+	var ev events
+	c := taggedCache(t, shared, cistern.WithBus(b), cistern.WithHooks(ev.hooks()), cistern.WithHookKeys())
 	notes, err := cistern.New[string, string]("notes", stringKey, cistern.WithL1(shared), cistern.WithTTL(time.Minute))
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +104,12 @@ func TestBusIgnoresEventsItCannotTrust(t *testing.T) {
 		// Claims to be about "tasks" but names another namespace's key.
 		{Namespace: "tasks", Kind: bus.KindKey, Name: "cistern:v1:notes:-:k:n"},
 		{Namespace: "tasks", Kind: bus.KindKey, Name: "moat:ratelimit:1.2.3.4"},
+		// This cache's prefix, but not a key it could have stored (#119): a
+		// control character would reach the host's logs through the hooks.
+		{Namespace: "tasks", Kind: bus.KindKey, Name: "cistern:v1:tasks:-:k:x\nlevel=admin msg=forged"},
+		{Namespace: "tasks", Kind: bus.KindKey, Name: "cistern:v1:tasks:-:k:"},
+		{Namespace: "tasks", Kind: bus.KindKey, Name: "cistern:v1:tasks:-:x:n"},
+		{Namespace: "tasks", Kind: bus.KindKey, Name: "cistern:v1:tasks:-:h:not-a-hash"},
 		{Namespace: "tasks", Kind: bus.KindTag, Name: "a\x00b"},
 		{Namespace: "tasks", Kind: bus.Kind(99), Name: "user:42:lists"},
 	} {
@@ -109,6 +119,25 @@ func TestBusIgnoresEventsItCannotTrust(t *testing.T) {
 	}
 	mustHit(t, c, "user:42:list:1", "v")
 	mustHit(t, notes, "n", "note")
+	ev.mu.Lock()
+	defer ev.mu.Unlock()
+	if len(ev.invalids) != 0 || len(ev.errs) != 0 {
+		t.Fatalf("untrusted events reached the hooks: invalidations %+v, errors %+v", ev.invalids, ev.errs)
+	}
+}
+
+// ADR-0008: a key longer than MaxKeyBytes is stored under its hash, and an
+// event naming it must still evict it from the other replicas — validating
+// event names (#119) must not reject hashed keys.
+func TestBusDeleteEvictsAHashedKeyFromOtherReplicas(t *testing.T) {
+	long := "user:42:" + strings.Repeat("x", cistern.MaxKeyBytes)
+	a, b := replicas(t, bus.NewLocal(), cistern.WithKeyHashing())
+	mustSetTagged(t, a, long, "v")
+	mustHit(t, b, long, "v")
+	if err := a.Delete(context.Background(), long); err != nil {
+		t.Fatal(err)
+	}
+	mustMiss(t, b, long)
 }
 
 type failingBus struct{ *bus.Local }

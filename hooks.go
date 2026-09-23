@@ -103,7 +103,7 @@ type ErrorEvent struct {
 // Tags are always present — they name groups, not entries.
 type InvalidateEvent struct {
 	Namespace string
-	Key       string // empty unless WithHookKeys, and for tag invalidations
+	Key       string // empty unless WithHookKeys, for tag invalidations, and for a Remote one of a hashed key (only its hash travels)
 	Tag       string
 	Remote    bool
 }
