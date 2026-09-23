@@ -78,6 +78,13 @@ Use your own password, not the one above. Each permission is there because
 the suite fails without it: `mget`, `incr` and `pexpire` for tag generations,
 `publish`, `subscribe` and the `&cistern:*` channel for the Bus.
 
+Expect two kinds of denial in `ACL LOG` from this user, both harmless:
+`client|setinfo`, which go-redis sends on each new connection, and `ping`,
+which it sends every few seconds to health-check an idle Bus subscription.
+Neither is needed, the subscription keeps delivering, and granting them would
+widen the user for no function; filter them out of whatever alerts on
+`ACL LOG` so real denials stand out.
+
 **TLS** outside local development, through the client's `TLSConfig`. The
 integration suite does not exercise TLS; that is go-redis's code path, not
 this module's.
