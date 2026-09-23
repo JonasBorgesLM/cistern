@@ -66,3 +66,13 @@ None here; the open part belongs to ADR-0005.
 The exception is answered: a missing generation counter is recreated at an
 unpredictable value in [1, 2⁶²), so an evicted counter makes the entries of its
 tag misses and can never make a retired entry current again.
+
+## Amendment (audit finding #114)
+"The cache database" in the Consequences must be read as **the cache
+instance**. `maxmemory` and `maxmemory-policy` are instance-wide: with
+`allkeys-lru`, cistern's memory pressure evicts keys from every logical
+database on the instance, so a rate limiter on DB 0 and cistern on DB 1 is
+exactly the sharing this decision rules out. The audit reproduced it: 200
+keys in DB 0 were all evicted when DB 1 filled. The requirements, the threat
+model and the operator documentation now say "a separate instance" and that a
+logical database does not isolate eviction.
