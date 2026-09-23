@@ -129,6 +129,12 @@ jobs:
             exit 1
           fi
 
+      # A replace is honoured with GOWORK=off too, and would make this job
+      # resolve ../ instead of the published core (#116).
+      - name: No replace directive
+        working-directory: redisstore
+        run: ../.github/scripts/no-replace.sh
+
       - name: go mod verify
         working-directory: redisstore
         run: go mod verify

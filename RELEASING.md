@@ -77,9 +77,12 @@ workspace — the resolution a consumer gets:
   a recorded exclusion (`examples` is never published);
 - `go mod verify`, build, vet and `-race` tests **at the module's own floor**,
   with `GOTOOLCHAIN=local`, so the notes' claim about the floor is true;
-- for `redisstore`: the integration suite against a real Redis, and a core
+- for `redisstore`: the integration suite against a real Redis, a core
   requirement that is a **released version, not a pseudo-version**
-  ([`released-version.sh`](.github/scripts/released-version.sh));
+  ([`released-version.sh`](.github/scripts/released-version.sh)), and **no
+  `replace` directive** ([`no-replace.sh`](.github/scripts/no-replace.sh)) —
+  a replace would let every check above pass against the local core while the
+  version it names does not exist (#116);
 - for the core: still no dependency at all (ADR-0001);
 - the documentation checks, and `govulncheck` on the newest toolchain;
 - the API diff against this module's previous tag, read from local history;
