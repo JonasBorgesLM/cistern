@@ -12,6 +12,7 @@ import (
 
 	"github.com/JonasBorgesLM/cistern"
 	"github.com/JonasBorgesLM/cistern/bus"
+	"github.com/JonasBorgesLM/cistern/memory"
 	"github.com/JonasBorgesLM/cistern/redisstore"
 )
 
@@ -224,4 +225,41 @@ func TestNewBusValidatesItsClient(t *testing.T) {
 	if b, err := redisstore.NewBus(client(t, addr, false)); !errors.Is(err, cistern.ErrInvalidConfig) || b != nil {
 		t.Errorf("NewBus without ContextTimeoutEnabled = %v, %v", b, err)
 	}
+}
+
+// #117, T-12: a replica that starts during a Redis outage must still build its
+// cache. Subscribe returns without error while Redis is unreachable, within a
+// bounded wait, and New succeeds.
+// Negative control: verified failing with Subscribe returning the dial error.
+func TestCacheWithBusBuildsWhileRedisIsDown(t *testing.T) {
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close() // nothing listens here: connection refused
+
+	b, err := redisstore.NewBus(client(t, addr, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	c, err := cistern.New[string, string]("tasks", func(k string) string { return k },
+		cistern.WithL1(mustMemory(t)), cistern.WithTTL(time.Minute), cistern.WithBus(b))
+	if err != nil {
+		t.Fatalf("New with an unreachable Bus: %v", err)
+	}
+	defer c.Close()
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("New took %v with Redis down", elapsed)
+	}
+}
+
+func mustMemory(t *testing.T) *memory.Store {
+	t.Helper()
+	m, err := memory.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }

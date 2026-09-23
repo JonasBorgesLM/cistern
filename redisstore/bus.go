@@ -49,9 +49,15 @@ func (b *Bus) Publish(ctx context.Context, e bus.Event) error {
 	return nil
 }
 
-// Subscribe starts delivering events to h and returns once the subscription
-// is confirmed, so nothing published afterwards is missed. Messages are
-// untrusted (RS-07): a malformed one is dropped and the subscription goes on.
+// Subscribe starts delivering events to h. It waits a bounded time for Redis
+// to confirm the subscription, so that when Redis is up nothing published
+// after Subscribe returns is missed. When Redis is unreachable it does not
+// fail: go-redis keeps reconnecting and resubscribing, and delivery starts
+// once Redis is back — events published in between are missed, the
+// best-effort cost ADR-0006 accepts. Failing instead would make cistern.New
+// fail during an outage, turning a Redis outage into a startup outage
+// (ADR-0002, #117). Messages are untrusted (RS-07): a malformed one is
+// dropped and the subscription goes on.
 func (b *Bus) Subscribe(h bus.Handler) (func(), error) {
 	if h == nil {
 		return nil, errors.New("redisstore: nil handler")
@@ -59,9 +65,7 @@ func (b *Bus) Subscribe(h bus.Handler) (func(), error) {
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout*10)
 	defer cancel()
 	ps := b.client.Subscribe(ctx, Channel)
-	if _, err := ps.Receive(ctx); err != nil {
-		return nil, errors.Join(fmt.Errorf("redisstore: subscribe: %w", err), ps.Close())
-	}
+	_, _ = ps.Receive(ctx) //nolint:errcheck // Redis unreachable is not an error here: ps.Channel keeps reconnecting and resubscribing
 	messages := ps.Channel()
 	done := make(chan struct{})
 	go func() {
