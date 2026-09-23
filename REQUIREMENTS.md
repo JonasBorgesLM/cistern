@@ -307,6 +307,7 @@ supersession.
 
 ## 16. Open questions (to decide during C0–C1)
 
-- Exact physical key format (separator, opt-in hashing threshold).
+- ~~Exact physical key format (separator, opt-in hashing threshold).~~
+  Decided in ADR-0008.
 - Final public API naming (a synonym-free review, as done in `moat`).
 - Which `task-api` endpoint goes first: depends on the T0 result.

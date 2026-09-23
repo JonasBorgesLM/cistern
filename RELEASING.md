@@ -55,9 +55,11 @@ has no workspace. Tagging `redisstore` first publishes a release nobody can
   # {"enabled":true}
   ```
 
-- **The physical key format and the envelope version freeze with
-  `redisstore`.** After that, changing either is a migration, not an edit
-  (`REQUIREMENTS.md` §8.6, ADR-0009 planned).
+- **The physical key schema (`v1`, ADR-0008) and the envelope version freeze
+  with `redisstore`.** Changing either later loses no data — this is a cache —
+  but every replica starts cold and mixed-version replicas stop sharing entries
+  during the rollout, which lands on the source of truth. It needs a release
+  note, not only a version bump.
 - **The audit is done in a clean session**, by someone who did not write the
   code (`REQUIREMENTS.md` §15).
 
