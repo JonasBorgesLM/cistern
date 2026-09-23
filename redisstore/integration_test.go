@@ -219,14 +219,18 @@ func TestMinimalACLIsSufficient(t *testing.T) {
 		t.Fatalf("FLUSHALL as the ACL user: err = %v, want NOPERM", err)
 	}
 	// Channels too: the user may not listen to or forge another system's
-	// Pub/Sub traffic (#120).
+	// Pub/Sub traffic (#120). t.Error, not t.Fatal: PUBLISH and SUBSCRIBE
+	// share the same &cistern:* grant, so a widened ACL fails both, and one
+	// must not stop the test before the other runs — a t.Fatal here left
+	// the SUBSCRIBE check unable to ever fail on its own (found by the
+	// re-audit, #120 follow-up).
 	if err := limited.Publish(ctx, "moat:events", "x").Err(); err == nil || !strings.Contains(err.Error(), "NOPERM") {
-		t.Fatalf("PUBLISH outside cistern's channels: err = %v, want NOPERM", err)
+		t.Errorf("PUBLISH outside cistern's channels: err = %v, want NOPERM", err)
 	}
 	ps := limited.Subscribe(ctx, "moat:events")
 	defer ps.Close()
 	if _, err := ps.Receive(ctx); err == nil || !strings.Contains(err.Error(), "NOPERM") {
-		t.Fatalf("SUBSCRIBE outside cistern's channels: err = %v, want NOPERM", err)
+		t.Errorf("SUBSCRIBE outside cistern's channels: err = %v, want NOPERM", err)
 	}
 }
 
