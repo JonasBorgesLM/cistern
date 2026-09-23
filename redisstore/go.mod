@@ -11,6 +11,12 @@ module github.com/JonasBorgesLM/cistern/redisstore
 // The core is required at a pseudo-version of develop until the core's first
 // tag; the release replaces it with that tag (RELEASING.md). The
 // satellite-resolution CI job resolves this exact pin with GOWORK=off.
+//
+// github.com/moby/go-archive (indirect, through testcontainers) is raised to
+// v0.3.3: below v0.3.0 it carries GHSA-hfg8-hc9c-6c3h. The vulnerable code is
+// not reachable from this module — govulncheck agrees — but a consumer's
+// dependency scanner reads the module graph, not reachability, and that
+// finding could not be cleared downstream. moat and cairn made the same bump.
 go 1.25.0
 
 require (
@@ -41,17 +47,17 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/klauspost/compress v1.18.6 // indirect
+	github.com/klauspost/compress v1.18.7 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
 	github.com/mdelapenya/tlscert v0.2.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/moby/go-archive v0.2.0 // indirect
+	github.com/moby/go-archive v0.3.3 // indirect
 	github.com/moby/moby/api v1.55.0 // indirect
 	github.com/moby/moby/client v0.5.0 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.7.0 // indirect
-	github.com/moby/sys/user v0.4.0 // indirect
+	github.com/moby/sys/user v0.4.1 // indirect
 	github.com/moby/sys/userns v0.1.0 // indirect
 	github.com/moby/term v0.5.2 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
