@@ -169,12 +169,15 @@ TLS on a local development Redis.
 ### T-09 — Wrong eviction policy or a shared Redis database
 
 **Actor:** none — a misconfiguration. **Impact:** with `noeviction` the cache
-fills Redis and writes fail; sharing a database with `moat`'s rate limiter or
-`cairn`'s link store lets cache pressure evict their data.
+fills Redis and writes fail; sharing an instance with `moat`'s rate limiter or
+`cairn`'s link store lets cache pressure evict their data. A separate logical
+database does not prevent it: `maxmemory` and `maxmemory-policy` are
+instance-wide, and `allkeys-lru` evicts from every database on the instance
+(#114).
 
 **Mitigation:** RS-10 (`allkeys-lru` documented as correct *for cached values*, ADR-0010 —
 the explicit contrast with `moat`, where the same policy caused a bypass; a
-separate instance/logical DB recommended).
+separate instance required — a logical database is not enough).
 
 **Residual:** documentation only; `redisstore` does not verify the policy at
 startup in the MVP.
@@ -278,9 +281,10 @@ enforced controls:
   the library does.
 - Redis is reachable only from the host application's network segment, with
   AUTH/ACL and TLS configured per RS-09.
-- `maxmemory-policy` is set to `allkeys-lru` on the Redis instance/database
-  used for caching, and that instance/database is not shared with `moat`'s
-  rate limiter or `cairn`'s link store (RS-10).
+- `maxmemory-policy` is set to `allkeys-lru` on the Redis instance used for
+  caching, and that instance is not shared with `moat`'s rate limiter or
+  `cairn`'s link store — not even in another logical database, since the
+  policy is instance-wide (RS-10).
 
 ## 6. Non-goals that are also security decisions
 

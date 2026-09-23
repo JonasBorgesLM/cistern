@@ -102,8 +102,9 @@ how to keep moat secrets out of the cache.
 ## Operating it
 
 - **Redis**: a dedicated ACL user with the tested minimum, TLS outside
-  development, `maxmemory-policy allkeys-lru`, and never a database shared with
-  moat's rate limiter or cairn's link store —
+  development, `maxmemory-policy allkeys-lru`, and never an instance shared
+  with moat's rate limiter or cairn's link store (a logical database is not
+  enough) —
   [`redisstore/README.md`](redisstore/README.md) has the exact lines.
 - **Staleness between replicas** is at most the L1 TTL when a Bus event is
   lost; keep it short (seconds).

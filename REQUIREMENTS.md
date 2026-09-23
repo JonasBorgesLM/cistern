@@ -115,7 +115,7 @@ demonstrated against the same scenario.
 | **RS-07** | **The Bus carries invalidation only, never values.** Worst case of a forged message from someone with Redis access: extra misses (documented in the threat model). |
 | **RS-08** | **Privacy in hooks**: hooks receive the namespace and the operation by default, not the full key (which may contain user ids). The full key is available only via an explicit option. |
 | **RS-09** | **Redis connection**: configurable AUTH/ACL and TLS support; the README documents an ACL user with the minimum commands required. |
-| **RS-10** | **`maxmemory-policy`** documented: for a cache, `allkeys-lru` is correct (explicit contrast with `moat`, where the same policy caused a bypass). Recommend a separate instance/logical DB from the rate limiter. |
+| **RS-10** | **`maxmemory-policy`** documented: for a cache, `allkeys-lru` is correct (explicit contrast with `moat`, where the same policy caused a bypass). Require a separate instance from the rate limiter: the policy is instance-wide, so a separate logical DB does not isolate eviction (#114). |
 | **RS-11** | **Threat model** in `docs/THREAT-MODEL.md`: assets, considered attackers (malicious authenticated user, Redis access, DoS via non-existent keys), mitigations and accepted risks. |
 
 ## 7. Non-functional requirements (NFR)
@@ -222,7 +222,7 @@ format (D2).
 | **bastion** | Circuit breaker + timeout on Redis calls via `Guard` (example, no dependency in the core) |
 | **crier** | Observability hooks exported as logs/metrics; example in the `examples` module |
 | **moat** | Same multi-module and release pattern; `secret.Value` is never cached (RS-04); `no-store` stays on authenticated HTTP responses |
-| **cairn** | Shares the Redis infrastructure; recommends a separate logical DB/ACL |
+| **cairn** | Shares the Redis infrastructure; needs a separate instance (its store requires `noeviction`) and its own ACL user |
 | **gateway-auth** | Future multi-replica consumer — the reason L2 + Bus exist from the MVP |
 | **sapper** | Validation harness: baseline, stampede, dead Redis, slow Redis |
 | **security-scanner** | Runs against `task-api` after integration, focused on cross-user leakage |
