@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/redis/go-redis/v9"
 
@@ -78,16 +79,16 @@ func (b *Bus) Subscribe(h bus.Handler) (func(), error) {
 			h(e)
 		}
 	}()
-	var closed bool
+	// Once, not a flag: Cache.Close may be called concurrently (#121), and a
+	// second call must also return only after delivery has stopped.
+	var once sync.Once
 	return func() {
-		if closed {
-			return
-		}
-		closed = true
-		err := ps.Close()
-		<-done
-		if err != nil {
-			return // unsubscribe has no error result; the connection is released either way
-		}
+		once.Do(func() {
+			err := ps.Close()
+			<-done
+			if err != nil {
+				return // unsubscribe has no error result; the connection is released either way
+			}
+		})
 	}, nil
 }

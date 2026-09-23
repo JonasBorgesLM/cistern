@@ -115,7 +115,12 @@ func unsubscribeStopsDelivery(t *testing.T, a, b bus.Bus) {
 	gone, stayed := newCollector(), newCollector()
 	unsubscribe := subscribe(t, b, gone.handle)
 	subscribe(t, b, stayed.handle)
-	unsubscribe()
+	var wg sync.WaitGroup // concurrently, as two Close calls would (#121); run with -race
+	for range 2 {
+		wg.Add(1)
+		go func() { defer wg.Done(); unsubscribe() }()
+	}
+	wg.Wait()
 	unsubscribe()
 	publish(t, a, tagEvent)
 	publish(t, a, keyEvent)
