@@ -260,7 +260,7 @@ func (c *Cache[K, V]) Delete(ctx context.Context, k K) error {
 
 // read looks pk up in L1, then L2. A level that errors, or holds an entry that
 // is malformed, from another codec, past its logical expiry or not decodable,
-// is skipped (ADR-0002, ADR-0009).
+// is skipped (ADR-0002, ADR-0009). A usable L2 entry is copied into L1.
 func (c *Cache[K, V]) read(ctx context.Context, pk string) (value V, ok bool, err error) {
 	for _, s := range []Store{c.l1, c.l2} {
 		if s == nil {
@@ -277,14 +277,35 @@ func (c *Cache[K, V]) read(ctx context.Context, pk string) (value V, ok bool, er
 		if err != nil || e.Codec != c.codecID || !c.now().Before(e.Expires) {
 			continue
 		}
+		fromL2 := s == c.l2 && c.l1 != nil
 		if e.Absent {
+			if fromL2 {
+				c.backfill(ctx, pk, data, e.Expires)
+			}
 			return value, false, ErrNotFound
 		}
-		if v, err := c.decode(e.Payload); err == nil {
-			return v, true, nil
+		v, err := c.decode(e.Payload)
+		if err != nil {
+			continue
 		}
+		if fromL2 {
+			c.backfill(ctx, pk, data, e.Expires)
+		}
+		return v, true, nil
 	}
 	return value, false, nil
+}
+
+// backfill copies an entry read from L2 into L1, for no longer than the L1
+// TTL and never beyond the L2 entry's own expiry (ADR-0004).
+func (c *Cache[K, V]) backfill(ctx context.Context, pk string, data []byte, expires time.Time) {
+	ttl := min(c.l1TTL, expires.Sub(c.now()))
+	if ttl <= 0 {
+		return
+	}
+	if err := c.l1.Set(ctx, pk, data, ttl); err != nil {
+		return // reads fail open (ADR-0002)
+	}
 }
 
 // write stores an entry in every configured level, L2 first, with one jitter

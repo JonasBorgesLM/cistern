@@ -20,10 +20,10 @@ Requirements live in [`REQUIREMENTS.md`](REQUIREMENTS.md) and are cited by id
 
 ## Current phase
 
-**C4 done; C5 (composition) next.** `Cache[K,V]` (`Get`, `GetOrLoad`, `Set`,
-`Delete`, options, key validation, `NoCache`), `internal/singleflight`,
-`internal/envelope`, `memory`, `codec`, the `Store` interface and the
-`redisstore` module exist. Nothing is released. Work
+**C5 done; C6 (invalidation) next.** `Cache[K,V]` (`Get`, `GetOrLoad`, `Set`,
+`Delete`, L2→L1 backfill, options, key validation, `NoCache`),
+`internal/singleflight`, `internal/envelope`, `memory`, `codec`, `cisterntest`
+and the `redisstore` module exist. Nothing is released. Work
 is tracked on the [project board](https://github.com/users/JonasBorgesLM/projects/6), grouped
 C0–C8 plus the task-api track T0–T3 (`REQUIREMENTS.md` §13). Do not write
 implementation code without an issue that says to, and write the phase's
