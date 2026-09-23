@@ -144,7 +144,6 @@ func TestCreateInvalidatesOnlyItsOwnersLists(t *testing.T) {
 	}
 }
 
-
 // ADR-0002: the task was created; the invalidation failure is reported, not
 // turned into a failed Create that a caller would retry into a duplicate.
 func TestInvalidationFailureIsReportedNotReturned(t *testing.T) {
