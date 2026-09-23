@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/JonasBorgesLM/cistern/bus"
 	"github.com/JonasBorgesLM/cistern/internal/envelope"
 )
 
@@ -73,9 +74,9 @@ func (c *Cache[K, V]) InvalidateTag(ctx context.Context, tag string) error {
 		c.gens.drop(gk)
 	}
 	if bumpErr != nil {
-		return fmt.Errorf("cistern: invalidating tag: %w", bumpErr)
+		bumpErr = fmt.Errorf("cistern: invalidating tag: %w", bumpErr)
 	}
-	return nil
+	return errors.Join(bumpErr, c.publish(ctx, bus.KindTag, tag))
 }
 
 // readTagged reads a tagged entry: usable only when the generations it

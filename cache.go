@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/JonasBorgesLM/cistern/bus"
 	"github.com/JonasBorgesLM/cistern/codec"
 	"github.com/JonasBorgesLM/cistern/internal/envelope"
 	"github.com/JonasBorgesLM/cistern/internal/singleflight"
@@ -56,6 +57,11 @@ type Cache[K comparable, V any] struct {
 	gens      *genCache     // with two levels only
 	genTTL    time.Duration // counters outlive the entries that record them
 	genPrefix string
+
+	// Cross-instance invalidation (ADR-0006); bus is nil without WithBus.
+	namespace   string
+	bus         bus.Bus
+	unsubscribe func()
 }
 
 // New returns a Cache whose entries live under namespace.
@@ -111,9 +117,18 @@ func New[K comparable, V any](namespace string, key func(K) string, opts ...Opti
 		auth:        auth,
 		genTTL:      2 * cfg.ttl,
 		genPrefix:   "cistern:v1:" + namespace + ":g:",
+		namespace:   namespace,
+		bus:         cfg.bus,
 	}
 	if tagsFn != nil && cfg.l1 != nil && cfg.l2 != nil {
 		c.gens = newGenCache(l1TTL, func() time.Time { return c.now() })
+	}
+	if c.bus != nil {
+		unsubscribe, err := c.bus.Subscribe(c.onEvent)
+		if err != nil {
+			return nil, fmt.Errorf("%w: subscribing to the bus: %w", ErrInvalidConfig, err)
+		}
+		c.unsubscribe = unsubscribe
 	}
 	return c, nil
 }
@@ -167,6 +182,8 @@ func validate(namespace string, hasKey bool, cfg *config) error {
 		return fmt.Errorf("jitter must be in [0, 1), got %v", cfg.jitter)
 	case cfg.maxValue <= 0:
 		return fmt.Errorf("max value bytes must be positive, got %d", cfg.maxValue)
+	case cfg.busSet && cfg.bus == nil:
+		return errors.New("WithBus was given a nil Bus")
 	case cfg.codec == nil:
 		return errors.New("codec is nil")
 	case len(cfg.codec.ID()) < 1 || len(cfg.codec.ID()) > 32:
@@ -311,6 +328,7 @@ func (c *Cache[K, V]) Delete(ctx context.Context, k K) error {
 	if c.l2 != nil {
 		errs = append(errs, c.l2.Delete(ctx, s.pk))
 	}
+	errs = append(errs, c.publish(ctx, bus.KindKey, s.pk))
 	return errors.Join(errs...)
 }
 
