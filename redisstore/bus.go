@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -80,14 +81,26 @@ func (b *Bus) Subscribe(h bus.Handler) (func(), error) {
 		}
 	}()
 	// Once, not a flag: Cache.Close may be called concurrently (#121), and a
-	// second call must also return only after delivery has stopped.
+	// second call must also wait for the first to finish.
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			err := ps.Close()
-			<-done
-			if err != nil {
-				return // unsubscribe has no error result; the connection is released either way
+			// With Redis unreachable, ps.Close waits for go-redis to finish a
+			// background redial, which only the client's dial timeout ends —
+			// and Close is on every shutdown path (#137, T-12). So the wait is
+			// bounded like Subscribe's: past it, unsubscribe returns and the
+			// goroutine ends when the dial does. An event arriving in that
+			// window can still reach h once, which an invalidation tolerates.
+			// The error has nowhere to go; the connection is released anyway.
+			stopped := make(chan error, 1)
+			go func() {
+				err := ps.Close()
+				<-done
+				stopped <- err
+			}()
+			select {
+			case <-stopped:
+			case <-time.After(DefaultTimeout * 10):
 			}
 		})
 	}, nil
