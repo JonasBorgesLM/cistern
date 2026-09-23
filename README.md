@@ -7,12 +7,12 @@ tag and by event.
 The name is the reservoir inside the fortress: you drink from it instead of
 going to the river, and it keeps serving when the river is slow or under siege.
 
-> **Status: unreleased (phase C5 next).** The typed `Cache[K,V]` with
-> `Get`/`GetOrLoad`/`Set`/`Delete`, load coalescing, negative caching, the
-> versioned envelope, key validation, value limits, `NoCache`, the `memory` L1,
-> the JSON codec and the Redis L2 (`redisstore`) exist; L1 backfill from L2 and
-> invalidation by tag do not yet — see [Roadmap](#roadmap). No version is
-> tagged, and the API may still change.
+> **Status: unreleased (phase C6 next).** The typed `Cache[K,V]` over an
+> in-process L1 and a Redis L2 — `Get`/`GetOrLoad`/`Set`/`Delete`, backfill,
+> load coalescing, negative caching, the versioned envelope, key validation,
+> value limits, `NoCache` — and the `cisterntest` conformance suite exist;
+> invalidation by tag and across instances does not yet — see
+> [Roadmap](#roadmap). No version is tagged, and the API may still change.
 
 ---
 
@@ -83,7 +83,7 @@ cistern/examples/    not published — task-api decorator, bastion, crier
 | **C2** Loading | `GetOrLoad`, coalescing, negative caching *(done)* |
 | **C3** Encoding & validation | Envelope, key validation, value limit, `NoCache` *(done)* |
 | **C4** redisstore | Redis L2, fail-open, timeouts, `Guard`, testcontainers *(done)* |
-| **C5** Composition | L1+L2, `cisterntest` passing for both stores |
+| **C5** Composition | L1+L2, `cisterntest` passing for both stores *(done)* |
 | **C6** Invalidation | Tag generation keys, in-process and Pub/Sub Bus |
 | **C7** Hooks & examples | Hooks, `examples` module, README |
 | **C8** Validation & release | sapper scenarios, clean-session audit, `v0.1.0` |
