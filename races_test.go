@@ -3,6 +3,7 @@ package cistern_test
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -91,4 +92,66 @@ func TestReadAfterInvalidateTagDoesNotJoinAnOlderLoad(t *testing.T) {
 	}
 	close(release)
 	<-doneOld
+}
+
+// failingGens is an L1 whose generations can never be read, as when the
+// authoritative level times out.
+type failingGens struct{ *memory.Store }
+
+func (failingGens) GetTagged(context.Context, string, []string, time.Duration) (value []byte, ok bool, gens []uint64, err error) {
+	return nil, false, nil, errStore
+}
+
+// #134, T-01: callers whose generations could not be read share a load only
+// with callers of the same tags. Keyed by a fixed marker instead, another
+// owner joined the first owner's load and was returned its value.
+// Negative control: verified failing with every unknown-generations caller
+// keyed by the same marker.
+func TestCallersWithUnreadableGenerationsDoNotShareAcrossTags(t *testing.T) {
+	l1, err := memory.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := cistern.New[int, string]("tasks", func(int) string { return "lists" },
+		cistern.WithL1(failingGens{l1}), cistern.WithTTL(time.Minute),
+		cistern.WithTags(func(owner int) []string { return []string{fmt.Sprintf("user:%d:lists", owner)} }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, done42 := blockedLoad(t, c, 42, "private to 42")
+	if v := answer(t, getOrLoadAsync(c, 43, "private to 43"), release); v != "private to 43" {
+		t.Fatalf("user 43 received %q", v)
+	}
+	close(release)
+	<-done42
+}
+
+// #134, T-10: during an L2 outage the source carries the load, so callers of
+// the same tags whose generations could not be read still share one load.
+// Negative control: verified failing with a flight key unique to each caller.
+func TestCallersWithUnreadableGenerationsStillShareWithinTheirTags(t *testing.T) {
+	l1, err := memory.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loads, coalesced atomic.Int32
+	c, err := cistern.New[int, string]("tasks", func(int) string { return "lists" },
+		cistern.WithL1(failingGens{l1}), cistern.WithTTL(time.Minute),
+		cistern.WithTags(func(owner int) []string { return []string{fmt.Sprintf("user:%d:lists", owner)} }),
+		cistern.WithHooks(cistern.Hooks{
+			OnLoad:      func(context.Context, cistern.LoadEvent) { loads.Add(1) },
+			OnCoalesced: func(context.Context, cistern.CoalescedEvent) { coalesced.Add(1) },
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, done := blockedLoad(t, c, 42, "v")
+	joined := getOrLoadAsync(c, 42, "v")
+	time.Sleep(50 * time.Millisecond) // for the second caller to reach the flight; if it has not, coalesced is 0
+	close(release)
+	<-done
+	<-joined
+	if loads.Load() != 1 || coalesced.Load() != 1 {
+		t.Fatalf("loads = %d, coalesced = %d; want 1 and 1", loads.Load(), coalesced.Load())
+	}
 }
