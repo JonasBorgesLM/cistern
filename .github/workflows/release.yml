@@ -1,0 +1,236 @@
+# Release (CD). Shape inherited from cairn's release.yml, with its lessons.
+#
+# Both published modules are libraries: the tag is the artifact. What this
+# workflow does is refuse to publish a release that cannot be consumed, and
+# check everything that can fail before the release exists — a tag is
+# immutable once anyone has fetched it (RELEASING.md).
+name: Release
+
+on:
+  push:
+    tags:
+      # `*` does not match `/`, so `v*` is the core alone and each satellite
+      # needs its own line. The `resolve` job fails when a module in the tree
+      # matches none of these, so a forgotten line cannot go unnoticed.
+      - "v*"
+      - "redisstore/v*"
+
+permissions:
+  contents: read
+
+env:
+  GO_SUPPORTED_VERSION: "stable"
+  GOVULNCHECK_VERSION: "v1.7.0"
+  # golang.org/x/exp has no tagged releases; this is the exact pseudo-version,
+  # pinned because gorelease makes no compatibility promise. Bump on a stated
+  # trigger — output this workflow cannot parse, or a bug it hits — never on a
+  # schedule.
+  GORELEASE_VERSION: "v0.0.0-20260824195058-e88cd73687aa"
+  GOFLAGS: -mod=readonly
+  GOSUMDB: sum.golang.org
+
+jobs:
+  resolve:
+    name: Resolve module from tag
+    runs-on: ubuntu-latest
+    outputs:
+      module: ${{ steps.parse.outputs.module }}
+      version: ${{ steps.parse.outputs.version }}
+      label: ${{ steps.parse.outputs.label }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: parse
+        run: |
+          tag='${{ github.ref_name }}'
+          case "$tag" in
+            v*)   module="."          ; version="$tag"          ; label="cistern" ;;
+            */v*) module="${tag%/v*}" ; version="v${tag##*/v}" ; label="$module" ;;
+            *)    echo "::error::tag '$tag' matches no module"; exit 1 ;;
+          esac
+          echo "module=$module"   >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "label=$label"     >> "$GITHUB_OUTPUT"
+          echo "releasing $label $version from $module"
+
+      - name: Every module in the tree can be released, or is excluded on purpose
+        run: |
+          for f in $(find . -name go.mod -not -path './.git/*'); do
+            dir=$(dirname "${f#./}")
+            case "$dir" in
+              .|redisstore) ;;
+              examples) ;; # never published (ADR-0001): excluded, not forgotten
+              *) echo "::error::module at '$dir' matches no tag pattern in this workflow"; exit 1 ;;
+            esac
+          done
+          echo "every module has a tag pattern or a recorded exclusion"
+
+  verify:
+    name: Verify ${{ needs.resolve.outputs.label }}
+    needs: resolve
+    runs-on: ubuntu-latest
+    outputs:
+      floor: ${{ steps.floor.outputs.version }}
+    env:
+      # No workspace anywhere: a release must resolve the way a consumer does.
+      GOWORK: "off"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the API diff needs this module's previous tags
+
+      # Verified at the module's own floor, with no silent toolchain upgrade
+      # (ADR-0013) — so the release notes can truthfully say so. cairn's notes
+      # claimed the floor while verifying with the newest toolchain.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: ${{ needs.resolve.outputs.module }}/go.mod
+          cache: false
+      - id: floor
+        run: echo "version=$(go version | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+
+      - name: Build, vet, test as a consumer resolves it
+        working-directory: ${{ needs.resolve.outputs.module }}
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          [ "$(go env GOWORK)" = "off" ] || { echo "::error::a workspace is in effect"; exit 1; }
+          go mod verify
+          go build ./...
+          go vet ./...
+          go test -race ./...
+
+      # redisstore's guarantees are about a real Redis (RNF-07); releasing it
+      # on unit tests alone would ship the part that matters unverified.
+      - name: Integration suite against real Redis
+        if: needs.resolve.outputs.module == 'redisstore'
+        working-directory: redisstore
+        env:
+          GOTOOLCHAIN: local
+        run: go test -tags=integration -race -count=1 ./...
+
+      # RELEASING.md, step 3: a satellite must require a released core. A
+      # pseudo-version is an unreleased commit nobody reviewed as a release.
+      - name: The satellite requires a released core
+        if: needs.resolve.outputs.module == 'redisstore'
+        working-directory: redisstore
+        run: |
+          v=$(go list -m -f '{{.Version}}' github.com/JonasBorgesLM/cistern)
+          ./.github/scripts/released-version.sh "$v"
+
+      # A published version carrying a dependency cannot be taken back
+      # (ADR-0001, RNF-01).
+      - name: The core still has no dependency
+        if: needs.resolve.outputs.module == '.'
+        run: |
+          graph=$(go list -m -f '{{if not .Main}}{{.Path}}{{end}}' all 2>&1) || {
+            echo "::error::cannot resolve the core module graph"; printf '%s\n' "$graph"; exit 1; }
+          if [ -n "$(printf '%s' "$graph" | tr -d '[:space:]')" ]; then
+            echo "::error::releasing a core with dependencies (ADR-0001)"; printf '%s\n' "$graph"; exit 1
+          fi
+
+      - name: Documentation is current
+        run: ./.github/scripts/check-docs.sh
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_SUPPORTED_VERSION }}
+          cache: false
+      - name: govulncheck
+        working-directory: ${{ needs.resolve.outputs.module }}
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
+          govulncheck ./...
+
+      # RNF-10: release notes come from the real API diff, not from memory.
+      # -base is read from local tag history, never inferred: once the proxy has
+      # indexed the tag being released, gorelease would diff it against itself.
+      - name: Generate API diff
+        working-directory: ${{ needs.resolve.outputs.module }}
+        run: |
+          module='${{ needs.resolve.outputs.module }}'
+          tag='${{ github.ref_name }}'
+          if [ "$module" = "." ]; then prefix=""; else prefix="$module/"; fi
+          sorted=$(git tag --list "${prefix}v*" --sort=-v:refname)
+          newest=$(printf '%s\n' "$sorted" | head -1)
+          if [ "$newest" != "$tag" ]; then
+            echo "::error::expected $tag to be the newest tag, found '${newest:-<none>}'"; exit 1
+          fi
+          second=$(printf '%s\n' "$sorted" | sed -n '2p')
+          if [ -n "$second" ]; then base="${second#"$prefix"}"; else base="none"; fi
+          go install golang.org/x/exp/cmd/gorelease@${{ env.GORELEASE_VERSION }}
+          set +e
+          gorelease -base="$base" > "$RUNNER_TEMP/apidiff.txt" 2>&1
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/apidiff.txt"
+          if [ "$status" -ne 0 ]; then
+            # The one refusal that follows a real diff: the proxy already sees
+            # the tag being released. Anything else fails the release.
+            if grep -q "^Can only suggest a release version when compared against the most recent version of this major:" "$RUNNER_TEMP/apidiff.txt"; then
+              echo "::warning::gorelease could not suggest a version; proceeding with the diff it printed"
+            else
+              echo "::error::gorelease exited $status comparing against $base"; exit "$status"
+            fi
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: apidiff
+          path: ${{ runner.temp }}/apidiff.txt
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [resolve, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/artifacts
+
+      # RNF-10: an unsigned release is one nobody can attribute. Fails closed
+      # while .github/allowed_signers holds no key.
+      - name: Verify the tag is signed
+        run: |
+          keys=$(grep -cv -e '^[[:space:]]*#' -e '^[[:space:]]*$' .github/allowed_signers || true)
+          if [ "${keys:-0}" -eq 0 ]; then
+            echo "::error::.github/allowed_signers holds no key -- no release can be verified (RELEASING.md)"
+            exit 1
+          fi
+          git config gpg.ssh.allowedSignersFile "$GITHUB_WORKSPACE/.github/allowed_signers"
+          git verify-tag '${{ github.ref_name }}'
+
+      - name: Assemble release notes
+        run: |
+          diff_file=$(find "$RUNNER_TEMP/artifacts" -type f -name apidiff.txt -print -quit)
+          if [ ! -s "$diff_file" ]; then
+            echo "::error::apidiff.txt missing or empty -- the artifact upload must have failed"; exit 1
+          fi
+          notes="$RUNNER_TEMP/notes.md"
+          {
+            printf '## %s %s\n\n' '${{ needs.resolve.outputs.label }}' '${{ needs.resolve.outputs.version }}'
+            printf 'Built, vetted and tested with `%s`, the module'"'"'s declared floor, and no workspace.\n\n' '${{ needs.verify.outputs.floor }}'
+            printf '### API changes\n\n```\n'
+            cat "$diff_file"
+            printf '```\n\n'
+            printf 'Requirements: [REQUIREMENTS.md](REQUIREMENTS.md) — '
+            printf 'Decisions: [docs/adr](docs/adr/README.md) — '
+            printf 'Threats: [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md)\n'
+          } > "$notes"
+          cat "$notes"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create '${{ github.ref_name }}' \
+            --repo '${{ github.repository }}' \
+            --title '${{ needs.resolve.outputs.label }} ${{ needs.resolve.outputs.version }}' \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --verify-tag

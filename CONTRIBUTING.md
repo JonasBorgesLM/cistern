@@ -147,6 +147,9 @@ golangci-lint run ./...
 gosec -tests -exclude-generated ./...
 govulncheck ./...
 ./.github/scripts/check-docs.sh
+
+go test -coverpkg=./... -coverprofile=coverage.out ./...   # in the core
+./.github/scripts/coverage-floor.sh coverage.out 85        # RNF-07
 ```
 
 `go.work` is deliberately not committed: it changes how modules resolve for

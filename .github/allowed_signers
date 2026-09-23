@@ -1,0 +1,22 @@
+# SSH keys allowed to sign release tags, checked by the `release` job in
+# .github/workflows/release.yml (RNF-10).
+#
+# THIS FILE IS EMPTY, AND THAT BLOCKS EVERY RELEASE. That is deliberate: an
+# unsigned release is one nobody can attribute, and a check that warns instead
+# of failing gates nothing.
+#
+# To populate it, from the machine that will cut tags:
+#
+#   ssh-add -L                      # or: cat ~/.ssh/id_ed25519.pub
+#
+# then add one line per key, in the format git expects:
+#
+#   <email> namespaces="git" ssh-ed25519 <key>...
+#
+# and configure git to sign tags with it:
+#
+#   git config --global gpg.format ssh
+#   git config --global user.signingkey ~/.ssh/id_ed25519.pub
+#   git config --global tag.gpgsign true
+#
+# See RELEASING.md, "Before the first tag of a module".
