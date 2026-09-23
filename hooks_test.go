@@ -78,26 +78,82 @@ func TestHitAndMissEventsCarryTheLevel(t *testing.T) {
 }
 
 // RS-08: keys usually embed a user id and hooks feed logs, so events carry the
-// namespace but not the key unless the consumer asks.
-// Negative control: verified failing with keys filled in by default.
+// namespace but not the key unless the consumer asks. Every event kind is
+// fired, because each hook builds its event at its own call site (#118).
+// Negative control: verified failing with the key passed straight through at
+// each of the six call sites in hooks.go, one at a time.
 func TestHookEventsWithholdTheKeyByDefault(t *testing.T) {
-	ctx := context.Background()
-	var quiet, loud events
-	c1 := newCache(t, cistern.WithL1(newL1(t)), cistern.WithTTL(time.Minute), cistern.WithHooks(quiet.hooks()))
-	c2 := newCache(t, cistern.WithL1(newL1(t)), cistern.WithTTL(time.Minute), cistern.WithHooks(loud.hooks()), cistern.WithHookKeys())
-	for _, c := range []*cistern.Cache[string, string]{c1, c2} {
-		_, _, _ = c.Get(ctx, "user:42:list:1")
-		_ = c.Set(ctx, "user:42:list:1", "v")
-		_, _, _ = c.Get(ctx, "user:42:list:1")
-		_ = c.Delete(ctx, "user:42:list:1")
-	}
-	for _, got := range []string{quiet.misses[0].Key, quiet.hits[0].Key, quiet.invalids[0].Key} {
-		if got != "" {
-			t.Fatalf("an event carried the key %q without WithHookKeys", got)
+	const key = "user:42:list:1"
+	fire := func(opts ...cistern.Option) *events {
+		ctx := context.Background()
+		var ev events
+		c, _, l2 := twoLevels(t, append([]cistern.Option{cistern.WithHooks(ev.hooks())}, opts...)...)
+
+		release, done := blockedLoad(t, c, key, "v") // miss, then load
+		joined := getOrLoadAsync(c, key, "v")        // coalesced
+		for deadline := time.Now().Add(2 * time.Second); ; {
+			l2.mu.Lock()
+			gets := l2.gets
+			l2.mu.Unlock()
+			if gets >= 2 || time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(time.Millisecond)
 		}
+		time.Sleep(20 * time.Millisecond) // from its L2 miss to joining the flight
+		close(release)
+		<-done
+		<-joined
+
+		_, _, _ = c.Get(ctx, key) // hit
+		_ = c.Delete(ctx, key)    // invalidate
+		l2.mu.Lock()
+		l2.failGet = errStore
+		l2.mu.Unlock()
+		_, _, _ = c.Get(ctx, key) // swallowed error
+		return &ev
 	}
-	if loud.misses[0].Key != "user:42:list:1" || loud.hits[0].Key != "user:42:list:1" || loud.invalids[0].Key != "user:42:list:1" {
-		t.Fatalf("with WithHookKeys the events should carry the key: %+v %+v %+v", loud.misses[0], loud.hits[0], loud.invalids[0])
+	keys := func(ev *events) map[string][]string {
+		ev.mu.Lock()
+		defer ev.mu.Unlock()
+		got := map[string][]string{}
+		for _, e := range ev.misses {
+			got["miss"] = append(got["miss"], e.Key)
+		}
+		for _, e := range ev.hits {
+			got["hit"] = append(got["hit"], e.Key)
+		}
+		for _, e := range ev.loads {
+			got["load"] = append(got["load"], e.Key)
+		}
+		for _, e := range ev.coalesced {
+			got["coalesced"] = append(got["coalesced"], e.Key)
+		}
+		for _, e := range ev.errs {
+			got["error"] = append(got["error"], e.Key)
+		}
+		for _, e := range ev.invalids {
+			got["invalidate"] = append(got["invalidate"], e.Key)
+		}
+		return got
+	}
+	kinds := []string{"miss", "hit", "load", "coalesced", "error", "invalidate"}
+
+	quiet, loud := keys(fire()), keys(fire(cistern.WithHookKeys()))
+	for _, kind := range kinds {
+		if len(quiet[kind]) == 0 || len(loud[kind]) == 0 {
+			t.Fatalf("no %s event fired (quiet %v, loud %v); the test proves nothing about it", kind, quiet[kind], loud[kind])
+		}
+		for _, k := range quiet[kind] {
+			if k != "" {
+				t.Errorf("%s event carried the key %q without WithHookKeys", kind, k)
+			}
+		}
+		for _, k := range loud[kind] {
+			if k != key {
+				t.Errorf("with WithHookKeys, %s event carried %q, want %q", kind, k, key)
+			}
+		}
 	}
 }
 
