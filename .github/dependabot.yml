@@ -34,6 +34,18 @@ updates:
           - "github.com/testcontainers/*"
           - "github.com/docker/*"
 
+  # The examples module: not published, but its dependencies — go-redis,
+  # bastion, crier, moat — are the versions a reader copies.
+  - package-ecosystem: gomod
+    directory: /examples
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, examples]
+    commit-message:
+      prefix: "build(deps)"
+
   # Actions are pinned by major version; an action update is a supply-chain
   # change that deserves the same review as a code dependency.
   - package-ecosystem: github-actions
