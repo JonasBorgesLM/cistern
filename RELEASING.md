@@ -1,7 +1,8 @@
 # Releasing
 
-> **Nothing has been released yet.** [`release.yml`](.github/workflows/release.yml)
-> implements the checks below.
+> **`v0.1.0` and `redisstore/v0.1.0` are released**, following the sequence
+> below. [`release.yml`](.github/workflows/release.yml) implements the checks
+> this document describes.
 
 Modules are versioned and tagged independently (ADR-0001, RNF-10). The tag
 prefix selects the module.

@@ -7,12 +7,12 @@ tag and by event.
 The name is the reservoir inside the fortress: you drink from it instead of
 going to the river, and it keeps serving when the river is slow or under siege.
 
-> **Status: unreleased (phase C8 next).** The library is feature-complete for
-> v0.1: two levels, coalescing, negative caching, tag invalidation, a
-> cross-instance Bus, hooks, and the `examples` module. What remains is
-> validation under load with sapper, a clean-session audit and the release —
-> see [Roadmap](#roadmap). No version is tagged yet, and the API may still
-> change.
+> **Status: [`v0.1.0`](https://github.com/JonasBorgesLM/cistern/releases/tag/v0.1.0)
+> and [`redisstore/v0.1.0`](https://github.com/JonasBorgesLM/cistern/releases/tag/redisstore/v0.1.0)
+> are released** — signed, audited across three clean-session passes
+> ([`docs/audit-log.md`](docs/audit-log.md)), `go get`-able. What's left of C8
+> is validating the `task-api` integration under sapper — see
+> [Roadmap](#roadmap).
 
 ---
 
@@ -152,11 +152,13 @@ cistern/examples/    not published — task-api decorator, bastion, crier, moat 
 | **C5** Composition | L1+L2, `cisterntest` passing for both stores *(done)* |
 | **C6** Invalidation | Tag generation counters, in-process and Pub/Sub Bus *(done)* |
 | **C7** Hooks & examples | Hooks, `examples` module, README *(done)* |
-| **C8** Validation & release | sapper scenarios, clean-session audit, `v0.1.0` |
+| **C8** Validation & release | audit **in three clean sessions** *(done)*, `v0.1.0` and `redisstore/v0.1.0` **released** *(done)*; sapper scenarios against `task-api` still pending T2 (below) |
 
-In parallel from C7, the `task-api` track: **T0** baseline with sapper → **T1**
-endpoint choice → **T2** `CachedTaskRepository` → **T3** re-measure and
-release.
+In parallel from C7, the `task-api` track: **T0** baseline with sapper *(done —
+see `#70`)* → **T1** endpoint choice → **T2** `CachedTaskRepository` → **T3**
+re-measure and release. `#67`'s sapper scenarios (stampede, dead/slow Redis,
+penetration, isolation) run against `task-api` after T2, so they close with T3,
+not independently.
 
 ## Ecosystem
 
