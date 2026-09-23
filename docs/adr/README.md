@@ -11,11 +11,17 @@ at the time stays readable. The convention is inherited from `crier` and
 | ADR | Title | Status | Amended by |
 | --- | --- | --- | --- |
 | [0001](0001-module-structure-and-dependency-policy.md) | Multi-module structure and dependency-free core | Accepted | — |
+| [0002](0002-fail-open-reads-fail-loud-invalidation.md) | Fail-open reads, fail-loud invalidation | Accepted | — |
+| [0003](0003-cache-aside-default-write-through-deferred.md) | Cache-aside as the default; write-through deferred | Accepted — reopening criterion recorded | — |
+| [0004](0004-l1-l2-composition-and-ttl-ordering.md) | L1+L2 composition with L1 TTL ≤ L2 TTL | Accepted | — |
+| [0010](0010-lru-eviction-is-safe-for-cached-values.md) | LRU eviction is safe for cached values — with one exception | Accepted — constrains ADR-0005 | — |
 | [0013](0013-minimum-go-version-per-module.md) | Minimum Go version per module | Accepted | — |
 
 ADR-0001 and ADR-0013 are the two decisions gated by phase C0
 (`REQUIREMENTS.md` §13): the module layout and the Go version floor have to
-exist before there is any code to build with either.
+exist before there is any code to build with either. ADR-0002, 0003, 0004 and
+0010 open C1. ADR-0010 is the one to read with care: it argues that LRU is safe
+here despite `moat`'s M-1, and names the one key in L2 for which that is false.
 
 ## Planned
 
@@ -24,15 +30,11 @@ when each is written — before the code of the phase that needs it, not now.
 
 | ADR | Title | Written during |
 | --- | --- | --- |
-| 0002 | Fail-open in the cache vs. fail-closed in `moat`'s rate limiter | C1 |
-| 0003 | Cache-aside as the default; write-through deferred | C1 |
-| 0004 | L1+L2 composition with L1 TTL ≤ L2 TTL | C1 |
-| 0005 | Tag invalidation via generation keys (no `SCAN`/`KEYS`) | C6 |
+| 0005 | Tag invalidation via generation keys (no `SCAN`/`KEYS`) — must answer ADR-0010's generation-counter exception | C6 |
 | 0006 | Bus is best-effort and carries invalidation only | C6 |
 | 0007 | Self-contained singleflight under `internal/` | C2 |
 | 0008 | Mandatory key scope | C1 |
 | 0009 | Versioned envelope prepared for stale-while-revalidate | C3 |
-| 0010 | LRU eviction is safe here (contrast with `moat`'s M-1) | C1 |
 | 0011 | Cache-aside race: accepted risk and mitigations | C6 |
 | 0012 | Redis Cluster out of the initial scope | C4 |
 
