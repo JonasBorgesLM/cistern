@@ -20,10 +20,11 @@ Requirements live in [`REQUIREMENTS.md`](REQUIREMENTS.md) and are cited by id
 
 ## Current phase
 
-**C5 done; C6 (invalidation) next.** `Cache[K,V]` (`Get`, `GetOrLoad`, `Set`,
-`Delete`, L2→L1 backfill, options, key validation, `NoCache`),
-`internal/singleflight`, `internal/envelope`, `memory`, `codec`, `cisterntest`
-and the `redisstore` module exist. Nothing is released. Work
+**C6 done; C7 (hooks & examples) next.** `Cache[K,V]` (`Get`, `GetOrLoad`,
+`Set`, `Delete`, `InvalidateTag`, `Close`, backfill, options, key validation,
+`NoCache`), `bus`, `internal/singleflight`, `internal/envelope`, `memory`,
+`codec`, `cisterntest` and the `redisstore` module (Store, TagStore, Bus)
+exist. Nothing is released. Work
 is tracked on the [project board](https://github.com/users/JonasBorgesLM/projects/6), grouped
 C0–C8 plus the task-api track T0–T3 (`REQUIREMENTS.md` §13). Do not write
 implementation code without an issue that says to, and write the phase's
@@ -36,7 +37,7 @@ planned ADR (`docs/adr/README.md`, "Planned") before its code.
 | Path | Module | Notes |
 | --- | --- | --- |
 | `.` | core | **No `require` at all** — CI's `dependency-policy` enforces it |
-| `redisstore/` | Redis L2 (Pub/Sub Bus in C6) | go-redis; testcontainers (test only); core pinned by pseudo-version until the first core tag |
+| `redisstore/` | Redis L2, tag generations, Pub/Sub Bus | go-redis; testcontainers (test only); core pinned by pseudo-version until the first core tag |
 | `examples/` | not published | task-api decorator, bastion, crier. Arrives in C7 |
 
 `memory/`, `codec/`, `envelope/`, `bus/`, `cisterntest/` and `internal/` will be
