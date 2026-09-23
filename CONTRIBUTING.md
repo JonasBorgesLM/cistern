@@ -2,7 +2,7 @@
 
 ## Status
 
-`cistern` is pre-implementation. Work is tracked on the
+`cistern` is unreleased. Work is tracked on the
 [project board](https://github.com/users/JonasBorgesLM/projects/6),
 grouped into phases C0 through C8 plus the `task-api` integration track T0–T3
 ([`REQUIREMENTS.md`](REQUIREMENTS.md) §13).
