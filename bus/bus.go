@@ -44,9 +44,10 @@ type Bus interface {
 	// Publish sends e to every subscriber, best-effort.
 	Publish(ctx context.Context, e Event) error
 	// Subscribe registers h and returns a function that unregisters it; the
-	// function may be called more than once. An unreachable medium is not an
-	// error: a cache subscribes in New, and an outage must not stop it from
-	// starting (ADR-0006) — delivery begins when the medium is back.
+	// function may be called more than once, concurrently. An unreachable
+	// medium is not an error: a cache subscribes in New, and an outage must
+	// not stop it from starting (ADR-0006) — delivery begins when the medium
+	// is back.
 	Subscribe(h Handler) (unsubscribe func(), err error)
 }
 
