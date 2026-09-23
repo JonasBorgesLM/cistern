@@ -2,6 +2,7 @@ package cistern_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -39,6 +40,31 @@ func BenchmarkGetL1Hit(b *testing.B) {
 	for b.Loop() {
 		if _, ok, _ := c.Get(ctx, "user:42:list:1"); !ok {
 			b.Fatal("miss")
+		}
+	}
+}
+
+// RNF-06: a miss that loads — the loader, encoding, both writes and the
+// caller's decode. Every iteration uses a new key.
+func BenchmarkGetOrLoadMiss(b *testing.B) {
+	l1, err := memory.New()
+	if err != nil {
+		b.Fatal(err)
+	}
+	c, err := cistern.New[int, benchList]("tasks", strconv.Itoa, cistern.WithL1(l1), cistern.WithTTL(time.Hour))
+	if err != nil {
+		b.Fatal(err)
+	}
+	ctx := context.Background()
+	v := benchList{ID: 1, Owner: 42, Title: "today", Tasks: []string{"a", "b", "c", "d", "e", "f", "g", "h"}}
+	load := func(context.Context) (benchList, error) { return v, nil }
+
+	b.ReportAllocs()
+	i := 0
+	for b.Loop() {
+		i++
+		if _, err := c.GetOrLoad(ctx, i, load); err != nil {
+			b.Fatal(err)
 		}
 	}
 }
