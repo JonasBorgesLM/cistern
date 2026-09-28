@@ -4,10 +4,10 @@ github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c h1:udKWzYgxTojEK
 github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c/go.mod h1:xomTg63KZ2rFqZQzSB4Vz2SUXa1BpHTVz9L5PTmPC4E=
 github.com/JonasBorgesLM/bastion v0.2.1 h1:tAaYQAEX89mmrti3CvbKjBZwQreMYCoVcUV2+x3AkqI=
 github.com/JonasBorgesLM/bastion v0.2.1/go.mod h1:NSB+LQnNjX/uTr3naA5Mclv7CULXuO9/9Wdylu4KzXE=
-github.com/JonasBorgesLM/cistern v0.0.0-20260923133010-95390d73f42d h1:ZPCFoXQLe2rc/WwgylPLPz9yezhNMtQhuBU/02jg5cE=
-github.com/JonasBorgesLM/cistern v0.0.0-20260923133010-95390d73f42d/go.mod h1:RXMNdM6kWuBlWeUnwW1mS8jaWiLlsbW/gDjyzaMiN4E=
-github.com/JonasBorgesLM/cistern/redisstore v0.0.0-20260923133010-95390d73f42d h1:aO+NC76HVmXYtCo5lvwSeBCaEln1oHl/CRdRHVksmec=
-github.com/JonasBorgesLM/cistern/redisstore v0.0.0-20260923133010-95390d73f42d/go.mod h1:h2bwWVQLKM0SrJYTXJr2ZZxLGLHWG6Gsg+RZ3NRWomI=
+github.com/JonasBorgesLM/cistern v0.1.0 h1:jsSt3M315q3Lvgze9l2ZD6LmQDFzNpJh1eFkLBe9TqQ=
+github.com/JonasBorgesLM/cistern v0.1.0/go.mod h1:RXMNdM6kWuBlWeUnwW1mS8jaWiLlsbW/gDjyzaMiN4E=
+github.com/JonasBorgesLM/cistern/redisstore v0.1.0 h1:ShwluSw/T8l+vNADaMdVcfY4epKKm7NS1q/N9o79kN8=
+github.com/JonasBorgesLM/cistern/redisstore v0.1.0/go.mod h1:cwc2LzfloCTDugKAxKEzbnwghdvMhWbapYscik+4gZg=
 github.com/JonasBorgesLM/crier/core v0.3.0 h1:Di9QjzQisNAnB5CHKZy0Aaa2BM+r60IDcYTOT8oxbZ4=
 github.com/JonasBorgesLM/crier/core v0.3.0/go.mod h1:lQLrnt5MTokc7ryLVC6/czVGq4IrCFq14Yg/52Ms5Hk=
 github.com/JonasBorgesLM/moat v0.2.0 h1:4GWDJInGeIgLmdeUxzK2ckUT1WBBhffWyoZP5hSW0v0=
